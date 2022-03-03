@@ -1,0 +1,909 @@
+---
+title: "Figure 6a, 6b, S7: V1-V3 Core analysis"
+author: "Marta Nierychlo and Morten Simonsen Dueholm"
+date: "2021-08-25"
+---
+
+#Load packages
+```{r load_packages, message=FALSE, warning=FALSE, echo=FALSE, include=FALSE}
+library(ampvis2)
+library(data.table)
+library(tidyverse)
+library(patchwork)
+library(viridis)
+```
+#Load data
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+#load metadata
+seq_metadata <- read.csv("data/2020-07-03_Sequencing_metadata.txt", sep="\t")
+wwtp_m <- read.csv("data/DataS1_210413.txt", sep="\t")
+
+#V13
+seq_V13 <- seq_metadata[ , which(names(seq_metadata) %in% c("V13_seq_id","WWTP_id"))]
+V13metadata <- merge.data.frame(seq_V13, wwtp_m, by ="WWTP_id", all.x = TRUE)
+V13metadata$WWTP_ID <- V13metadata$WWTP_id
+V13metadata <- V13metadata[,-1]
+
+d13 <- amp_load(otutab = "data/V13_ASVtab.txt", 
+                taxonomy = "data/V13ASV_vs_MiDAS_4.8.sintax",
+                metadata = V13metadata)
+
+d13n <- amp_subset_samples(d13, minreads = 10000, normalise = TRUE)
+
+#Subset AS only in 4 basic process_type(s)
+d13nAS <- amp_subset_samples(d13n, Plant_type == "Activated sludge")
+d13nAS4PT <-  amp_subset_samples(d13nAS, Process_type %in% c("C", "C,N", "C,N,DN", "C,N,DN,P")) 
+
+#V4
+seq_V4 <- seq_metadata[ , which(names(seq_metadata) %in% c("V4_seq_id","WWTP_id"))]
+
+V4metadata <- merge.data.frame(seq_V4, wwtp_m, by ="WWTP_id", all.x = TRUE)
+V4metadata$WWTP_ID <- V4metadata$WWTP_id
+V4metadata <- V4metadata[,-1]
+
+d4 <- amp_load(otutab = "data/V4_ASVtab.txt", 
+                taxonomy = "data/V4ASV_vs_MiDAS_4.8.sintax",
+                metadata = V4metadata)
+
+d4n <- amp_subset_samples(d4, minreads = 10000, normalise = TRUE)
+
+#Subset AS only in 4 basic process_type(s)
+d4nAS <- amp_subset_samples(d4n, Plant_type == "Activated sludge")
+d4nAS4PT <-  amp_subset_samples(d4nAS, Process_type %in% c("C", "C,N", "C,N,DN", "C,N,DN,P"))  
+```
+
+### Genus-level core and conditional abundant taxa for V1V3 data
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+data <- d13nAS4PT
+group_by <- "WWTP_ID"
+
+#Create taxonomy
+tax <- d13nAS4PT$tax[1:7]
+tax$Kingdom <- gsub("k__","",tax$Kingdom)
+tax$Phylum <- gsub("p__","",tax$Phylum)
+tax$Class <- gsub("c__","",tax$Class)
+tax$Order <- gsub("o__","",tax$Order)
+tax$Family <- gsub("f__","",tax$Family)
+tax$Genus <- gsub("g__","",tax$Genus)
+tax$Species <- gsub("s__","",tax$Species)
+tax <- distinct(tax)
+
+d <- amp_export_long(
+    data,
+    metadata_vars = group_by,
+    tax_levels = c("Genus"))
+
+  #group up and summarise for core taxa
+  gg <- d[, .(sum = sum(count)), by = c("Genus", group_by)]   
+  setorderv(gg, c(group_by, "sum"), order = -1)
+  #calculate proportion % abundance of each ASV
+  gg[, Genusprop := sum / sum(sum) * 100, by = group_by]
+  #calculate how many times given ASV is observed in plants (>0)
+  gg <- gg[Genus!=""]
+  gg[, nObs := sum(sum > 0), by = Genus]
+  #calculate how many times (in how many plants) ASV is >0.1% abundant
+  gg[, nCore := sum(Genusprop > 0.1), by = Genus]
+  #add column with sum of all the reads
+  gg[, totalReads := sum(sum)]
+    gg_summary <- gg[
+    , 
+    .(nGenus = uniqueN(Genus)),
+    by = .(nObs, nCore)]
+    
+### Plot for core genera
+#generate main plot
+p1m <- ggplot(gg_summary,aes(
+      x = as.numeric(nObs), #factors to align correctly with margin plots
+      y = as.numeric(nCore), #factors to align correctly with margin plots
+      weight = nGenus)) +
+  geom_hex(bins = 100)+
+  scale_x_continuous(breaks = seq(0,n_distinct(gg$WWTP_ID),50), limits=c(-1,n_distinct(gg$WWTP_ID)+1)) +
+  scale_y_continuous(breaks = seq(0,n_distinct(gg$WWTP_ID),50), limits=c(-1,n_distinct(gg$WWTP_ID)+1)) +
+  xlab(paste0("Observed in n plants")) +
+  ylab(paste0("More than 0.1% abundant \nin n plants")) +
+  scale_fill_viridis(option="plasma", trans = "log10", breaks = c(1, 10, 100, 1000), limits=c(1,1000)) + 
+    theme_bw() +
+    geom_hline(yintercept = n_distinct(gg$WWTP_ID)*0.2, linetype="dashed", color = "red") +
+    geom_hline(yintercept = n_distinct(gg$WWTP_ID)*0.5, linetype="dashed", color = "red") +
+    geom_hline(yintercept = n_distinct(gg$WWTP_ID)*0.8, linetype="dashed", color = "red") +
+    annotate("text", x=0, y=n_distinct(gg$WWTP_ID)*0.25, label= "20% (lose core)",, fontface="bold", hjust = 0, color = "black") +
+    annotate("text", x=0, y=n_distinct(gg$WWTP_ID)*0.55, label= "50% (general core)",, fontface="bold", hjust = 0, color = "black") +
+    annotate("text", x=0, y=n_distinct(gg$WWTP_ID)*0.85, label= "80% (strict core)", fontface="bold", hjust = 0, color = "black") +
+  theme(legend.position = "bottom")
+
+#x margin plot  
+p1x <- ggplot(gg[, .(nObsSum = sum(sum)/unique(totalReads)*100), by = .(nObs)][order(nObs)][,nObsSumCum:=cumsum(nObsSum)], aes(x = as.numeric(nObs), y= nObsSumCum)) +
+      geom_line(width = 1) +
+      ylab("Cumulative genus \nabundance (%)") +
+      scale_x_continuous(breaks = seq(0,n_distinct(gg$WWTP_ID),50), limits=c(-1,n_distinct(gg$WWTP_ID)+1))+
+      theme_bw() +
+      theme(
+        axis.title.y = element_text(),
+        axis.title.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.text.x = element_blank(),
+        panel.grid.minor.y = element_blank())
+
+
+#y margin plot  
+p1y <- ggplot(
+      gg[, .(nCoreSum = sum(sum)/unique(totalReads)*100), by = .(nCore)][order(nCore)][,nCoreSumCum:=cumsum(nCoreSum)], aes(x = as.numeric(nCore), y = nCoreSumCum)) +
+      geom_line(width=1) +
+      ylab("Cumulative genus \nabundance (%)") +
+      scale_x_continuous(breaks = seq(0,n_distinct(gg$WWTP_ID),50), limits=c(-1,n_distinct(gg$WWTP_ID)+1))+
+      theme_bw() +
+        theme(
+        axis.title.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.text.y = element_blank(),
+        panel.grid.minor.x = element_blank()) +
+      coord_flip()+
+  geom_vline(xintercept = n_distinct(gg$WWTP_ID)*0.2, linetype="dashed", color = "red")+
+  geom_vline(xintercept = n_distinct(gg$WWTP_ID)*0.5, linetype="dashed", color = "red")+
+  geom_vline(xintercept = n_distinct(gg$WWTP_ID)*0.8, linetype="dashed", color = "red")
+
+###Retrive core data
+#subset ASVs present in the core
+ggV13_1 <- gg[(gg$nCore >= n_distinct(gg$WWTP_ID)*0.2),] %>%
+	group_by(Genus) %>%
+	summarise(mean_abu = mean(Genusprop)) %>%
+           arrange(desc(mean_abu))
+
+ggV13_1 <- ggV13_1[ ggV13_1$Genus != "", ]
+ggV13_1$Genus <- gsub("g__","",ggV13_1$Genus)
+ggV13_1[,"V1V3"] <- 2
+
+ggV13_2 <- gg[(gg$nCore >= n_distinct(gg$WWTP_ID)*0.5),] %>%
+	group_by(Genus) %>%
+	summarise(mean_abu = mean(Genusprop)) %>%
+           arrange(desc(mean_abu))
+
+ggV13_2 <- ggV13_2[ ggV13_2$Genus != "", ]
+ggV13_2$Genus <- gsub("g__","",ggV13_2$Genus)
+ggV13_2[,"V1V3"] <- 3
+
+ggV13_3 <- gg[(gg$nCore >= n_distinct(gg$WWTP_ID)*0.8),] %>%
+	group_by(Genus) %>%
+	summarise(mean_abu = mean(Genusprop)) %>%
+           arrange(desc(mean_abu))
+
+ggV13_3 <- ggV13_3[ ggV13_3$Genus != "", ]
+ggV13_3$Genus <- gsub("g__","",ggV13_3$Genus)
+ggV13_3[,"V1V3"] <- 4
+
+### Plot for conditional abundant genera
+  
+#group up and summarise for conditional abundant taxa (CAT)
+gg2 <- d[, .(sum = sum(count)), by = c("Genus", group_by)]   
+  setorderv(gg, c(group_by, "sum"), order = -1)
+  #calculate proportion % abundance of each ASV
+  gg2[, Genusprop := sum / sum(sum) * 100, by = group_by]
+  #calculate how many times given ASV is observed in plants (>0)
+  gg2 <- gg2[Genus!=""]
+  gg2 <- gg2[!(substr(Genus,4,100) %in% ggV13_1$Genus)] # Remove core genera
+  gg2[, nObs := sum(sum > 0), by = Genus]
+  #calculate how many times (in how many plants) ASV is >1% abundant
+  gg2[, nCA := sum(Genusprop > 1), by = Genus]
+  #add column with sum of all the reads
+  gg2[, totalReads := sum(sum)]
+    gg2_summary <- gg2[,.(nGenus = uniqueN(Genus)), by = .(nObs, nCA)]
+
+#generate main plot
+p2m <- ggplot(gg2_summary,aes(
+      x = as.numeric(nObs), #factors to align correctly with margin plots
+      y = as.numeric(nCA), #factors to align correctly with margin plots
+      weight = nGenus)) +
+  geom_hex(bins = 100)+
+  scale_x_continuous(breaks = seq(0,n_distinct(gg$WWTP_ID),50), limits=c(-1,n_distinct(gg$WWTP_ID)+1)) +
+  scale_y_continuous(breaks = seq(0,50,5), limits=c(-1,50+1)) +
+  xlab(paste0("Observed in n plants")) +
+  ylab(paste0("More than 1% abundant \nin n plants")) +
+  scale_fill_viridis(option="plasma", trans = "log10", breaks = c(1, 10, 100, 1000), limits=c(1,1000)) + 
+    theme_bw() +
+    geom_hline(yintercept = 1, linetype="dashed", color = "red") +
+    annotate("text", x=0, y=10, label= "In at least one plant\n(CA genera)", fontface="bold", hjust = 0, color = "black") +
+  theme(legend.position = "none")
+  
+#x margin plot  
+p2x <- ggplot(gg2[, .(nObsSum = sum(sum)/unique(totalReads)*100), by = .(nObs)][order(nObs)][,nObsSumCum:=cumsum(nObsSum)], aes(x = as.numeric(nObs), y= nObsSumCum)) +
+      geom_line() +
+      ylab("Cumulative genus \nabundance (%)") +
+      scale_x_continuous(breaks = seq(0,n_distinct(gg$WWTP_ID),50), limits=c(-1,n_distinct(gg$WWTP_ID)+1)) +
+      scale_y_continuous(limits=c(0,100)) +
+      theme_bw() +
+      theme(
+        axis.title.y = element_text(),
+        axis.title.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.text.x = element_blank(),
+        panel.grid.minor.y = element_blank())
+
+#y margin plot  
+p2y <- ggplot(gg2[, .(nCASum = sum(sum)/unique(totalReads)*100), by = .(nCA)][order(nCA)][,nCASumCum:=cumsum(nCASum)], aes(x = as.numeric(nCA), y = nCASumCum)) +
+      geom_line(width=1) +
+      ylab("Cumulative genus \nabundance (%)") +
+      scale_x_continuous(breaks = seq(0,50,5), limits=c(-1,50+1)) +
+  scale_y_continuous(limits=c(0,100)) +    
+  theme_bw() +
+        theme(
+        axis.title.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.text.y = element_blank(),
+        panel.grid.minor.x = element_blank()) +
+      coord_flip()+
+  geom_vline(xintercept = 1, linetype="dashed", color = "red")
+
+# Create combined plot
+p1 <- p1x + plot_spacer() + p2x + plot_spacer() +
+     p1m + p1y + p2m + p2y +
+     plot_layout(ncol=4, widths = c(4,1,4,1), heights = c(1.5,4)) & theme(text = element_text(size=14))
+
+ggsave(filename="output/Figure6a_6b_Core_genera_V13.pdf", plot=p1, width=12, height=6, useDingbats=FALSE, limitsize=FALSE)
+
+###Retrive core data
+#subset ASVs present in the core
+ggV13_4 <- gg2[(gg2$nCA >= 1)] %>%
+	group_by(Genus) %>%
+	summarise(mean_abu = mean(Genusprop)) %>%
+           arrange(desc(mean_abu))
+
+ggV13_4 <- ggV13_4[ ggV13_4$Genus != "", ]
+ggV13_4$Genus <- gsub("g__","",ggV13_4$Genus)
+ggV13_4[,"V1V3"] <- 1
+
+#Merge core data for v13
+ggV13_4 <- filter(ggV13_4, !(Genus %in% ggV13_3$Genus))
+ggV13_1 <- filter(ggV13_1, !(Genus %in% ggV13_2$Genus))
+ggV13_2 <- filter(ggV13_2, !(Genus %in% ggV13_3$Genus))
+
+
+V13_core <- rbind(ggV13_3[,c(1,3)], ggV13_2[,c(1,3)]) %>%
+  rbind(., ggV13_1[,c(1,3)]) %>%
+  rbind(., ggV13_4[,c(1,3)])
+```
+
+### Genus-level core and conditional abundant taxa for V4 data
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+#V4 amplicons
+data <- d4nAS4PT
+group_by <- "WWTP_ID"
+
+#Create taxonomy
+tax <- d4nAS4PT$tax[1:7]
+tax$Kingdom <- gsub("k__","",tax$Kingdom)
+tax$Phylum <- gsub("p__","",tax$Phylum)
+tax$Class <- gsub("c__","",tax$Class)
+tax$Order <- gsub("o__","",tax$Order)
+tax$Family <- gsub("f__","",tax$Family)
+tax$Genus <- gsub("g__","",tax$Genus)
+tax$Species <- gsub("s__","",tax$Species)
+tax <- distinct(tax)
+
+d <- amp_export_long(
+    data,
+    metadata_vars = group_by,
+    tax_levels = c("Genus"))
+
+  #group up and summarise for core taxa
+  gg <- d[, .(sum = sum(count)), by = c("Genus", group_by)]   
+  setorderv(gg, c(group_by, "sum"), order = -1)
+  #calculate proportion % abundance of each ASV
+  gg[, Genusprop := sum / sum(sum) * 100, by = group_by]
+  #calculate how many times given ASV is observed in plants (>0)
+  gg <- gg[Genus!=""]
+  gg[, nObs := sum(sum > 0), by = Genus]
+  #calculate how many times (in how many plants) ASV is >0.1% abundant
+  gg[, nCore := sum(Genusprop > 0.1), by = Genus]
+  #add column with sum of all the reads
+  gg[, totalReads := sum(sum)]
+    gg_summary <- gg[
+    , 
+    .(nGenus = uniqueN(Genus)),
+    by = .(nObs, nCore)]
+    
+### Plot for core genera
+#generate main plot
+p3m <- ggplot(gg_summary,aes(
+      x = as.numeric(nObs), #factors to align correctly with margin plots
+      y = as.numeric(nCore), #factors to align correctly with margin plots
+      weight = nGenus)) +
+  geom_hex(bins = 100)+
+  scale_x_continuous(breaks = seq(0,n_distinct(gg$WWTP_ID),50), limits=c(-1,n_distinct(gg$WWTP_ID)+1)) +
+  scale_y_continuous(breaks = seq(0,n_distinct(gg$WWTP_ID),50), limits=c(-1,n_distinct(gg$WWTP_ID)+1)) +
+  xlab(paste0("Observed in n plants")) +
+  ylab(paste0("More than 0.1% abundant \nin n plants")) +
+  scale_fill_viridis(option="plasma", trans = "log10", breaks = c(1, 10, 100, 1000), limits=c(1,1000)) + 
+    theme_bw() +
+    geom_hline(yintercept = n_distinct(gg$WWTP_ID)*0.2, linetype="dashed", color = "red") +
+    geom_hline(yintercept = n_distinct(gg$WWTP_ID)*0.5, linetype="dashed", color = "red") +
+    geom_hline(yintercept = n_distinct(gg$WWTP_ID)*0.8, linetype="dashed", color = "red") +
+    annotate("text", x=0, y=n_distinct(gg$WWTP_ID)*0.25, label= "20% (lose core)",, fontface="bold", hjust = 0, color = "black") +
+    annotate("text", x=0, y=n_distinct(gg$WWTP_ID)*0.55, label= "50% (general core)",, fontface="bold", hjust = 0, color = "black") +
+    annotate("text", x=0, y=n_distinct(gg$WWTP_ID)*0.85, label= "80% (strict core)", fontface="bold", hjust = 0, color = "black") +
+  theme(legend.position = "bottom")
+
+#x margin plot  
+p3x <- ggplot(gg[, .(nObsSum = sum(sum)/unique(totalReads)*100), by = .(nObs)][order(nObs)][,nObsSumCum:=cumsum(nObsSum)], aes(x = as.numeric(nObs), y= nObsSumCum)) +
+      geom_line(width = 1) +
+      ylab("Cumulative genus \nabundance (%)") +
+      scale_x_continuous(breaks = seq(0,n_distinct(gg$WWTP_ID),50), limits=c(-1,n_distinct(gg$WWTP_ID)+1))+
+      theme_bw() +
+      theme(
+        axis.title.y = element_text(),
+        axis.title.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.text.x = element_blank(),
+        panel.grid.minor.y = element_blank())
+
+
+#y margin plot  
+p3y <- ggplot(
+      gg[, .(nCoreSum = sum(sum)/unique(totalReads)*100), by = .(nCore)][order(nCore)][,nCoreSumCum:=cumsum(nCoreSum)], aes(x = as.numeric(nCore), y = nCoreSumCum)) +
+      geom_line(width=1) +
+      ylab("Cumulative genus \nabundance (%)") +
+      scale_x_continuous(breaks = seq(0,n_distinct(gg$WWTP_ID),50), limits=c(-1,n_distinct(gg$WWTP_ID)+1))+
+      theme_bw() +
+        theme(
+        axis.title.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.text.y = element_blank(),
+        panel.grid.minor.x = element_blank()) +
+      coord_flip()+
+  geom_vline(xintercept = n_distinct(gg$WWTP_ID)*0.2, linetype="dashed", color = "red")+
+  geom_vline(xintercept = n_distinct(gg$WWTP_ID)*0.5, linetype="dashed", color = "red")+
+  geom_vline(xintercept = n_distinct(gg$WWTP_ID)*0.8, linetype="dashed", color = "red")
+
+###Retrive core data
+#subset ASVs present in the core
+ggV4_1 <- gg[(gg$nCore >= n_distinct(gg$WWTP_ID)*0.2),] %>%
+	group_by(Genus) %>%
+	summarise(mean_abu = mean(Genusprop)) %>%
+           arrange(desc(mean_abu))
+
+ggV4_1 <- ggV4_1[ ggV4_1$Genus != "", ]
+ggV4_1$Genus <- gsub("g__","",ggV4_1$Genus)
+ggV4_1[,"V4"] <- 2
+
+ggV4_2 <- gg[(gg$nCore >= n_distinct(gg$WWTP_ID)*0.5),] %>%
+	group_by(Genus) %>%
+	summarise(mean_abu = mean(Genusprop)) %>%
+           arrange(desc(mean_abu))
+
+ggV4_2 <- ggV4_2[ ggV4_2$Genus != "", ]
+ggV4_2$Genus <- gsub("g__","",ggV4_2$Genus)
+ggV4_2[,"V4"] <- 3
+
+ggV4_3 <- gg[(gg$nCore >= n_distinct(gg$WWTP_ID)*0.8),] %>%
+	group_by(Genus) %>%
+	summarise(mean_abu = mean(Genusprop)) %>%
+           arrange(desc(mean_abu))
+
+ggV4_3 <- ggV4_3[ ggV4_3$Genus != "", ]
+ggV4_3$Genus <- gsub("g__","",ggV4_3$Genus)
+ggV4_3[,"V4"] <- 4
+
+### Plot for conditional abundant genera
+  
+#group up and summarise for conditional abundant taxa (CAT)
+gg2 <- d[, .(sum = sum(count)), by = c("Genus", group_by)]   
+  setorderv(gg, c(group_by, "sum"), order = -1)
+  #calculate proportion % abundance of each ASV
+  gg2[, Genusprop := sum / sum(sum) * 100, by = group_by]
+  #calculate how many times given ASV is observed in plants (>0)
+  gg2 <- gg2[Genus!=""]
+  gg2 <- gg2[!(substr(Genus,4,100) %in% ggV4_1$Genus)] # Remove core genera
+  gg2[, nObs := sum(sum > 0), by = Genus]
+  #calculate how many times (in how many plants) ASV is >1% abundant
+  gg2[, nCA := sum(Genusprop > 1), by = Genus]
+  #add column with sum of all the reads
+  gg2[, totalReads := sum(sum)]
+    gg2_summary <- gg2[,.(nGenus = uniqueN(Genus)), by = .(nObs, nCA)]
+
+#generate main plot
+p4m <- ggplot(gg2_summary,aes(
+      x = as.numeric(nObs), #factors to align correctly with margin plots
+      y = as.numeric(nCA), #factors to align correctly with margin plots
+      weight = nGenus)) +
+  geom_hex(bins = 100)+
+  scale_x_continuous(breaks = seq(0,n_distinct(gg$WWTP_ID),50), limits=c(-1,n_distinct(gg$WWTP_ID)+1)) +
+  scale_y_continuous(breaks = seq(0,50,5), limits=c(-1,50+1)) +
+  xlab(paste0("Observed in n plants")) +
+  ylab(paste0("More than 1% abundant \nin n plants")) +
+  scale_fill_viridis(option="plasma", trans = "log10", breaks = c(1, 10, 100, 1000), limits=c(1,1000)) + 
+    theme_bw() +
+    geom_hline(yintercept = 1, linetype="dashed", color = "red") +
+    annotate("text", x=0, y=10, label= "In at least one plant\n(CA genera)", fontface="bold", hjust = 0, color = "black") +
+  theme(legend.position = "none")
+  
+#x margin plot  
+p4x <- ggplot(gg2[, .(nObsSum = sum(sum)/unique(totalReads)*100), by = .(nObs)][order(nObs)][,nObsSumCum:=cumsum(nObsSum)], aes(x = as.numeric(nObs), y= nObsSumCum)) +
+      geom_line() +
+      ylab("Cumulative genus \nabundance (%)") +
+      scale_x_continuous(breaks = seq(0,n_distinct(gg$WWTP_ID),50), limits=c(-1,n_distinct(gg$WWTP_ID)+1)) +
+      scale_y_continuous(limits=c(0,100)) +
+      theme_bw() +
+      theme(
+        axis.title.y = element_text(),
+        axis.title.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.text.x = element_blank(),
+        panel.grid.minor.y = element_blank())
+
+#y margin plot  
+p4y <- ggplot(gg2[, .(nCASum = sum(sum)/unique(totalReads)*100), by = .(nCA)][order(nCA)][,nCASumCum:=cumsum(nCASum)], aes(x = as.numeric(nCA), y = nCASumCum)) +
+      geom_line(width=1) +
+      ylab("Cumulative genus \nabundance (%)") +
+      scale_x_continuous(breaks = seq(0,50,5), limits=c(-1,50+1)) +
+  scale_y_continuous(limits=c(0,100)) +    
+  theme_bw() +
+        theme(
+        axis.title.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.text.y = element_blank(),
+        panel.grid.minor.x = element_blank()) +
+      coord_flip()+
+  geom_vline(xintercept = 1, linetype="dashed", color = "red")
+
+# Create combined plot
+p2 <- p3x + plot_spacer() + p4x + plot_spacer() +
+     p3m + p3y + p4m + p4y +
+     plot_layout(ncol=4, widths = c(4,1,4,1), heights = c(1.5,4)) & theme(text = element_text(size=14))
+
+ggsave(filename="output/FigureS7_Core_genera_V4.pdf", plot=p2, width=12, height=6, useDingbats=FALSE, limitsize=FALSE)
+
+###Retrive core data
+#subset ASVs present in the core
+ggV4_4 <- gg2[(gg2$nCA >= 1)] %>%
+	group_by(Genus) %>%
+	summarise(mean_abu = mean(Genusprop)) %>%
+           arrange(desc(mean_abu))
+
+ggV4_4 <- ggV4_4[ ggV4_4$Genus != "", ]
+ggV4_4$Genus <- gsub("g__","",ggV4_4$Genus)
+ggV4_4[,"V4"] <- 1
+
+#Merge core data for V4
+ggV4_4 <- filter(ggV4_4, !(Genus %in% ggV4_3$Genus))
+ggV4_1 <- filter(ggV4_1, !(Genus %in% ggV4_2$Genus))
+ggV4_2 <- filter(ggV4_2, !(Genus %in% ggV4_3$Genus))
+
+
+V4_core <- rbind(ggV4_3[,c(1,3)], ggV4_2[,c(1,3)]) %>%
+  rbind(., ggV4_1[,c(1,3)]) %>%
+  rbind(., ggV4_4[,c(1,3)])
+
+Genus_core <- merge(V13_core,V4_core, by="Genus", all = TRUE) %>%
+  mutate(V1V3=if_else(is.na(V1V3),0,V1V3)) %>%
+  mutate(V4=if_else(is.na(V4),0,V4)) %>%         
+  mutate(Best=if_else(V1V3>V4,V1V3,V4))
+write.csv(Genus_core, file="output/Genus_core.csv", row.names=FALSE, quote=FALSE)
+```
+
+### Species-level core and conditional abundant taxa for V1V3 data
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+data <- d13nAS4PT
+group_by <- "WWTP_ID"
+
+#Create taxonomy
+tax <- d13nAS4PT$tax[1:7]
+tax$Kingdom <- gsub("k__","",tax$Kingdom)
+tax$Phylum <- gsub("p__","",tax$Phylum)
+tax$Class <- gsub("c__","",tax$Class)
+tax$Order <- gsub("o__","",tax$Order)
+tax$Family <- gsub("f__","",tax$Family)
+tax$Genus <- gsub("g__","",tax$Genus)
+tax$Species <- gsub("s__","",tax$Species)
+tax <- distinct(tax)
+
+d <- amp_export_long(
+    data,
+    metadata_vars = group_by,
+    tax_levels = c("Species"))
+
+  #group up and summarise for core taxa
+  gg <- d[, .(sum = sum(count)), by = c("Species", group_by)]   
+  setorderv(gg, c(group_by, "sum"), order = -1)
+  #calculate proportion % abundance of each ASV
+  gg[, Speciesprop := sum / sum(sum) * 100, by = group_by]
+  #calculate how many times given ASV is observed in plants (>0)
+  gg <- gg[Species!=""]
+  gg[, nObs := sum(sum > 0), by = Species]
+  #calculate how many times (in how many plants) ASV is >0.1% abundant
+  gg[, nCore := sum(Speciesprop > 0.1), by = Species]
+  #add column with sum of all the reads
+  gg[, totalReads := sum(sum)]
+    gg_summary <- gg[
+    , 
+    .(nSpecies = uniqueN(Species)),
+    by = .(nObs, nCore)]
+    
+### Plot for core genera
+#generate main plot
+p1m <- ggplot(gg_summary,aes(
+      x = as.numeric(nObs), #factors to align correctly with margin plots
+      y = as.numeric(nCore), #factors to align correctly with margin plots
+      weight = nSpecies)) +
+  geom_hex(bins = 100)+
+  scale_x_continuous(breaks = seq(0,n_distinct(gg$WWTP_ID),50), limits=c(-1,n_distinct(gg$WWTP_ID)+1)) +
+  scale_y_continuous(breaks = seq(0,n_distinct(gg$WWTP_ID),50), limits=c(-1,n_distinct(gg$WWTP_ID)+1)) +
+  xlab(paste0("Observed in n plants")) +
+  ylab(paste0("More than 0.1% abundant \nin n plants")) +
+  scale_fill_viridis(option="plasma", trans = "log10", breaks = c(1, 10, 100, 1000), limits=c(1,1000)) + 
+    theme_bw() +
+    geom_hline(yintercept = n_distinct(gg$WWTP_ID)*0.2, linetype="dashed", color = "red") +
+    geom_hline(yintercept = n_distinct(gg$WWTP_ID)*0.5, linetype="dashed", color = "red") +
+    geom_hline(yintercept = n_distinct(gg$WWTP_ID)*0.8, linetype="dashed", color = "red") +
+    annotate("text", x=0, y=n_distinct(gg$WWTP_ID)*0.25, label= "20% (lose core)",, fontface="bold", hjust = 0, color = "black") +
+    annotate("text", x=0, y=n_distinct(gg$WWTP_ID)*0.55, label= "50% (general core)",, fontface="bold", hjust = 0, color = "black") +
+    annotate("text", x=0, y=n_distinct(gg$WWTP_ID)*0.85, label= "80% (strict core)", fontface="bold", hjust = 0, color = "black") +
+  theme(legend.position = "bottom")
+
+#x margin plot  
+p1x <- ggplot(gg[, .(nObsSum = sum(sum)/unique(totalReads)*100), by = .(nObs)][order(nObs)][,nObsSumCum:=cumsum(nObsSum)], aes(x = as.numeric(nObs), y= nObsSumCum)) +
+      geom_line(width = 1) +
+      ylab("Cumulative species \nabundance (%)") +
+      scale_x_continuous(breaks = seq(0,n_distinct(gg$WWTP_ID),50), limits=c(-1,n_distinct(gg$WWTP_ID)+1))+
+      theme_bw() +
+      theme(
+        axis.title.y = element_text(),
+        axis.title.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.text.x = element_blank(),
+        panel.grid.minor.y = element_blank())
+
+
+#y margin plot  
+p1y <- ggplot(
+      gg[, .(nCoreSum = sum(sum)/unique(totalReads)*100), by = .(nCore)][order(nCore)][,nCoreSumCum:=cumsum(nCoreSum)], aes(x = as.numeric(nCore), y = nCoreSumCum)) +
+      geom_line(width=1) +
+      ylab("Cumulative species \nabundance (%)") +
+      scale_x_continuous(breaks = seq(0,n_distinct(gg$WWTP_ID),50), limits=c(-1,n_distinct(gg$WWTP_ID)+1))+
+      theme_bw() +
+        theme(
+        axis.title.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.text.y = element_blank(),
+        panel.grid.minor.x = element_blank()) +
+      coord_flip()+
+  geom_vline(xintercept = n_distinct(gg$WWTP_ID)*0.2, linetype="dashed", color = "red")+
+  geom_vline(xintercept = n_distinct(gg$WWTP_ID)*0.5, linetype="dashed", color = "red")+
+  geom_vline(xintercept = n_distinct(gg$WWTP_ID)*0.8, linetype="dashed", color = "red")
+
+###Retrive core data
+#subset ASVs present in the core
+ggV13_1 <- gg[(gg$nCore >= n_distinct(gg$WWTP_ID)*0.2),] %>%
+	group_by(Species) %>%
+	summarise(mean_abu = mean(Speciesprop)) %>%
+           arrange(desc(mean_abu))
+
+ggV13_1 <- ggV13_1[ ggV13_1$Species != "", ]
+ggV13_1$Species <- gsub("s__","",ggV13_1$Species)
+ggV13_1[,"V1V3"] <- 2
+
+ggV13_2 <- gg[(gg$nCore >= n_distinct(gg$WWTP_ID)*0.5),] %>%
+	group_by(Species) %>%
+	summarise(mean_abu = mean(Speciesprop)) %>%
+           arrange(desc(mean_abu))
+
+ggV13_2 <- ggV13_2[ ggV13_2$Species != "", ]
+ggV13_2$Species <- gsub("s__","",ggV13_2$Species)
+ggV13_2[,"V1V3"] <- 3
+
+ggV13_3 <- gg[(gg$nCore >= n_distinct(gg$WWTP_ID)*0.8),] %>%
+	group_by(Species) %>%
+	summarise(mean_abu = mean(Speciesprop)) %>%
+           arrange(desc(mean_abu))
+
+ggV13_3 <- ggV13_3[ ggV13_3$Species != "", ]
+ggV13_3$Species <- gsub("s__","",ggV13_3$Species)
+ggV13_3[,"V1V3"] <- 4
+
+### Plot for conditional abundant genera
+  
+#group up and summarise for conditional abundant taxa (CAT)
+gg2 <- d[, .(sum = sum(count)), by = c("Species", group_by)]   
+  setorderv(gg, c(group_by, "sum"), order = -1)
+  #calculate proportion % abundance of each ASV
+  gg2[, Speciesprop := sum / sum(sum) * 100, by = group_by]
+  #calculate how many times given ASV is observed in plants (>0)
+  gg2 <- gg2[Species!=""]
+  gg2 <- gg2[!(substr(Species,4,100) %in% ggV13_1$Species)] # Remove core genera
+  gg2[, nObs := sum(sum > 0), by = Species]
+  #calculate how many times (in how many plants) ASV is >1% abundant
+  gg2[, nCA := sum(Speciesprop > 1), by = Species]
+  #add column with sum of all the reads
+  gg2[, totalReads := sum(sum)]
+    gg2_summary <- gg2[,.(nSpecies = uniqueN(Species)), by = .(nObs, nCA)]
+
+#generate main plot
+p2m <- ggplot(gg2_summary,aes(
+      x = as.numeric(nObs), #factors to align correctly with margin plots
+      y = as.numeric(nCA), #factors to align correctly with margin plots
+      weight = nSpecies)) +
+  geom_hex(bins = 100)+
+  scale_x_continuous(breaks = seq(0,n_distinct(gg$WWTP_ID),50), limits=c(-1,n_distinct(gg$WWTP_ID)+1)) +
+  scale_y_continuous(breaks = seq(0,50,5), limits=c(-1,50+1)) +
+  xlab(paste0("Observed in n plants")) +
+  ylab(paste0("More than 1% abundant \nin n plants")) +
+  scale_fill_viridis(option="plasma", trans = "log10", breaks = c(1, 10, 100, 1000), limits=c(1,1000)) + 
+    theme_bw() +
+    geom_hline(yintercept = 1, linetype="dashed", color = "red") +
+    annotate("text", x=0, y=10, label= "In at least one plant\n(CA genera)", fontface="bold", hjust = 0, color = "black") +
+  theme(legend.position = "none")
+  
+#x margin plot  
+p2x <- ggplot(gg2[, .(nObsSum = sum(sum)/unique(totalReads)*100), by = .(nObs)][order(nObs)][,nObsSumCum:=cumsum(nObsSum)], aes(x = as.numeric(nObs), y= nObsSumCum)) +
+      geom_line() +
+      ylab("Cumulative species \nabundance (%)") +
+      scale_x_continuous(breaks = seq(0,n_distinct(gg$WWTP_ID),50), limits=c(-1,n_distinct(gg$WWTP_ID)+1)) +
+      scale_y_continuous(limits=c(0,100)) +
+      theme_bw() +
+      theme(
+        axis.title.y = element_text(),
+        axis.title.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.text.x = element_blank(),
+        panel.grid.minor.y = element_blank())
+
+#y margin plot  
+p2y <- ggplot(gg2[, .(nCASum = sum(sum)/unique(totalReads)*100), by = .(nCA)][order(nCA)][,nCASumCum:=cumsum(nCASum)], aes(x = as.numeric(nCA), y = nCASumCum)) +
+      geom_line(width=1) +
+      ylab("Cumulative species \nabundance (%)") +
+      scale_x_continuous(breaks = seq(0,50,5), limits=c(-1,50+1)) +
+  scale_y_continuous(limits=c(0,100)) +    
+  theme_bw() +
+        theme(
+        axis.title.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.text.y = element_blank(),
+        panel.grid.minor.x = element_blank()) +
+      coord_flip()+
+  geom_vline(xintercept = 1, linetype="dashed", color = "red")
+
+# Create combined plot
+p1 <- p1x + plot_spacer() + p2x + plot_spacer() +
+     p1m + p1y + p2m + p2y +
+     plot_layout(ncol=4, widths = c(4,1,4,1), heights = c(1.5,4)) & theme(text = element_text(size=14))
+
+ggsave(filename="output/Core_species_V13.pdf", plot=p1, width=12, height=6, useDingbats=FALSE, limitsize=FALSE)
+
+###Retrive core data
+#subset ASVs present in the core
+ggV13_4 <- gg2[(gg2$nCA >= 1)] %>%
+	group_by(Species) %>%
+	summarise(mean_abu = mean(Speciesprop)) %>%
+           arrange(desc(mean_abu))
+
+ggV13_4 <- ggV13_4[ ggV13_4$Species != "", ]
+ggV13_4$Species <- gsub("s__","",ggV13_4$Species)
+ggV13_4[,"V1V3"] <- 1
+
+#Merge core data for v13
+ggV13_4 <- filter(ggV13_4, !(Species %in% ggV13_3$Species))
+ggV13_1 <- filter(ggV13_1, !(Species %in% ggV13_2$Species))
+ggV13_2 <- filter(ggV13_2, !(Species %in% ggV13_3$Species))
+
+
+V13_core <- rbind(ggV13_3[,c(1,3)], ggV13_2[,c(1,3)]) %>%
+  rbind(., ggV13_1[,c(1,3)]) %>%
+  rbind(., ggV13_4[,c(1,3)]) %>%
+  merge(., tax[,c("Genus","Species")], by="Species", all.x=TRUE)
+```
+
+### Species-level core for V4 data
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+#V4 amplicons
+data <- d4nAS4PT
+group_by <- "WWTP_ID"
+
+#Create taxonomy
+tax <- d4nAS4PT$tax[1:7]
+tax$Kingdom <- gsub("k__","",tax$Kingdom)
+tax$Phylum <- gsub("p__","",tax$Phylum)
+tax$Class <- gsub("c__","",tax$Class)
+tax$Order <- gsub("o__","",tax$Order)
+tax$Family <- gsub("f__","",tax$Family)
+tax$Genus <- gsub("g__","",tax$Genus)
+tax$Species <- gsub("s__","",tax$Species)
+tax <- distinct(tax)
+
+d <- amp_export_long(
+    data,
+    metadata_vars = group_by,
+    tax_levels = c("Species"))
+
+  #group up and summarise for core taxa
+  gg <- d[, .(sum = sum(count)), by = c("Species", group_by)]   
+  setorderv(gg, c(group_by, "sum"), order = -1)
+  #calculate proportion % abundance of each ASV
+  gg[, Speciesprop := sum / sum(sum) * 100, by = group_by]
+  #calculate how many times given ASV is observed in plants (>0)
+  gg <- gg[Species!=""]
+  gg[, nObs := sum(sum > 0), by = Species]
+  #calculate how many times (in how many plants) ASV is >0.1% abundant
+  gg[, nCore := sum(Speciesprop > 0.1), by = Species]
+  #add column with sum of all the reads
+  gg[, totalReads := sum(sum)]
+    gg_summary <- gg[
+    , 
+    .(nSpecies = uniqueN(Species)),
+    by = .(nObs, nCore)]
+    
+### Plot for core genera
+#generate main plot
+p3m <- ggplot(gg_summary,aes(
+      x = as.numeric(nObs), #factors to align correctly with margin plots
+      y = as.numeric(nCore), #factors to align correctly with margin plots
+      weight = nSpecies)) +
+  geom_hex(bins = 100)+
+  scale_x_continuous(breaks = seq(0,n_distinct(gg$WWTP_ID),50), limits=c(-1,n_distinct(gg$WWTP_ID)+1)) +
+  scale_y_continuous(breaks = seq(0,n_distinct(gg$WWTP_ID),50), limits=c(-1,n_distinct(gg$WWTP_ID)+1)) +
+  xlab(paste0("Observed in n plants")) +
+  ylab(paste0("More than 0.1% abundant \nin n plants")) +
+  scale_fill_viridis(option="plasma", trans = "log10", breaks = c(1, 10, 100, 1000), limits=c(1,1000)) + 
+    theme_bw() +
+    geom_hline(yintercept = n_distinct(gg$WWTP_ID)*0.2, linetype="dashed", color = "red") +
+    geom_hline(yintercept = n_distinct(gg$WWTP_ID)*0.5, linetype="dashed", color = "red") +
+    geom_hline(yintercept = n_distinct(gg$WWTP_ID)*0.8, linetype="dashed", color = "red") +
+    annotate("text", x=0, y=n_distinct(gg$WWTP_ID)*0.25, label= "20% (lose core)",, fontface="bold", hjust = 0, color = "black") +
+    annotate("text", x=0, y=n_distinct(gg$WWTP_ID)*0.55, label= "50% (general core)",, fontface="bold", hjust = 0, color = "black") +
+    annotate("text", x=0, y=n_distinct(gg$WWTP_ID)*0.85, label= "80% (strict core)", fontface="bold", hjust = 0, color = "black") +
+  theme(legend.position = "bottom")
+
+#x margin plot  
+p3x <- ggplot(gg[, .(nObsSum = sum(sum)/unique(totalReads)*100), by = .(nObs)][order(nObs)][,nObsSumCum:=cumsum(nObsSum)], aes(x = as.numeric(nObs), y= nObsSumCum)) +
+      geom_line(width = 1) +
+      ylab("Cumulative species \nabundance (%)") +
+      scale_x_continuous(breaks = seq(0,n_distinct(gg$WWTP_ID),50), limits=c(-1,n_distinct(gg$WWTP_ID)+1))+
+      theme_bw() +
+      theme(
+        axis.title.y = element_text(),
+        axis.title.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.text.x = element_blank(),
+        panel.grid.minor.y = element_blank())
+
+
+#y margin plot  
+p3y <- ggplot(
+      gg[, .(nCoreSum = sum(sum)/unique(totalReads)*100), by = .(nCore)][order(nCore)][,nCoreSumCum:=cumsum(nCoreSum)], aes(x = as.numeric(nCore), y = nCoreSumCum)) +
+      geom_line(width=1) +
+      ylab("Cumulative species \nabundance (%)") +
+      scale_x_continuous(breaks = seq(0,n_distinct(gg$WWTP_ID),50), limits=c(-1,n_distinct(gg$WWTP_ID)+1))+
+      theme_bw() +
+        theme(
+        axis.title.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.text.y = element_blank(),
+        panel.grid.minor.x = element_blank()) +
+      coord_flip()+
+  geom_vline(xintercept = n_distinct(gg$WWTP_ID)*0.2, linetype="dashed", color = "red")+
+  geom_vline(xintercept = n_distinct(gg$WWTP_ID)*0.5, linetype="dashed", color = "red")+
+  geom_vline(xintercept = n_distinct(gg$WWTP_ID)*0.8, linetype="dashed", color = "red")
+
+###Retrive core data
+#subset ASVs present in the core
+ggV4_1 <- gg[(gg$nCore >= n_distinct(gg$WWTP_ID)*0.2),] %>%
+	group_by(Species) %>%
+	summarise(mean_abu = mean(Speciesprop)) %>%
+           arrange(desc(mean_abu))
+
+ggV4_1 <- ggV4_1[ ggV4_1$Species != "", ]
+ggV4_1$Species <- gsub("s__","",ggV4_1$Species)
+ggV4_1[,"V4"] <- 2
+
+ggV4_2 <- gg[(gg$nCore >= n_distinct(gg$WWTP_ID)*0.5),] %>%
+	group_by(Species) %>%
+	summarise(mean_abu = mean(Speciesprop)) %>%
+           arrange(desc(mean_abu))
+
+ggV4_2 <- ggV4_2[ ggV4_2$Species != "", ]
+ggV4_2$Species <- gsub("s__","",ggV4_2$Species)
+ggV4_2[,"V4"] <- 3
+
+ggV4_3 <- gg[(gg$nCore >= n_distinct(gg$WWTP_ID)*0.8),] %>%
+	group_by(Species) %>%
+	summarise(mean_abu = mean(Speciesprop)) %>%
+           arrange(desc(mean_abu))
+
+ggV4_3 <- ggV4_3[ ggV4_3$Species != "", ]
+ggV4_3$Species <- gsub("s__","",ggV4_3$Species)
+ggV4_3[,"V4"] <- 4
+
+### Plot for conditional abundant genera
+  
+#group up and summarise for conditional abundant taxa (CAT)
+gg2 <- d[, .(sum = sum(count)), by = c("Species", group_by)]   
+  setorderv(gg, c(group_by, "sum"), order = -1)
+  #calculate proportion % abundance of each ASV
+  gg2[, Speciesprop := sum / sum(sum) * 100, by = group_by]
+  #calculate how many times given ASV is observed in plants (>0)
+  gg2 <- gg2[Species!=""]
+  gg2 <- gg2[!(substr(Species,4,100) %in% ggV4_1$Species)] # Remove core genera
+  gg2[, nObs := sum(sum > 0), by = Species]
+  #calculate how many times (in how many plants) ASV is >1% abundant
+  gg2[, nCA := sum(Speciesprop > 1), by = Species]
+  #add column with sum of all the reads
+  gg2[, totalReads := sum(sum)]
+    gg2_summary <- gg2[,.(nSpecies = uniqueN(Species)), by = .(nObs, nCA)]
+
+#generate main plot
+p4m <- ggplot(gg2_summary,aes(
+      x = as.numeric(nObs), #factors to align correctly with margin plots
+      y = as.numeric(nCA), #factors to align correctly with margin plots
+      weight = nSpecies)) +
+  geom_hex(bins = 100)+
+  scale_x_continuous(breaks = seq(0,n_distinct(gg$WWTP_ID),50), limits=c(-1,n_distinct(gg$WWTP_ID)+1)) +
+  scale_y_continuous(breaks = seq(0,50,5), limits=c(-1,50+1)) +
+  xlab(paste0("Observed in n plants")) +
+  ylab(paste0("More than 1% abundant \nin n plants")) +
+  scale_fill_viridis(option="plasma", trans = "log10", breaks = c(1, 10, 100, 1000), limits=c(1,1000)) + 
+    theme_bw() +
+    geom_hline(yintercept = 1, linetype="dashed", color = "red") +
+    annotate("text", x=0, y=10, label= "In at least one plant\n(CA genera)", fontface="bold", hjust = 0, color = "black") +
+  theme(legend.position = "none")
+  
+#x margin plot  
+p4x <- ggplot(gg2[, .(nObsSum = sum(sum)/unique(totalReads)*100), by = .(nObs)][order(nObs)][,nObsSumCum:=cumsum(nObsSum)], aes(x = as.numeric(nObs), y= nObsSumCum)) +
+      geom_line() +
+      ylab("Cumulative species \nabundance (%)") +
+      scale_x_continuous(breaks = seq(0,n_distinct(gg$WWTP_ID),50), limits=c(-1,n_distinct(gg$WWTP_ID)+1)) +
+      scale_y_continuous(limits=c(0,100)) +
+      theme_bw() +
+      theme(
+        axis.title.y = element_text(),
+        axis.title.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.text.x = element_blank(),
+        panel.grid.minor.y = element_blank())
+
+#y margin plot  
+p4y <- ggplot(gg2[, .(nCASum = sum(sum)/unique(totalReads)*100), by = .(nCA)][order(nCA)][,nCASumCum:=cumsum(nCASum)], aes(x = as.numeric(nCA), y = nCASumCum)) +
+      geom_line(width=1) +
+      ylab("Cumulative species \nabundance (%)") +
+      scale_x_continuous(breaks = seq(0,50,5), limits=c(-1,50+1)) +
+  scale_y_continuous(limits=c(0,100)) +    
+  theme_bw() +
+        theme(
+        axis.title.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.text.y = element_blank(),
+        panel.grid.minor.x = element_blank()) +
+      coord_flip()+
+  geom_vline(xintercept = 1, linetype="dashed", color = "red")
+
+# Create combined plot
+p2 <- p3x + plot_spacer() + p4x + plot_spacer() +
+     p3m + p3y + p4m + p4y +
+     plot_layout(ncol=4, widths = c(4,1,4,1), heights = c(1.5,4)) & theme(text = element_text(size=14))
+
+ggsave(filename="output/Core_species_V4.pdf", plot=p2, width=12, height=6, useDingbats=FALSE, limitsize=FALSE)
+
+###Retrive core data
+#subset ASVs present in the core
+ggV4_4 <- gg2[(gg2$nCA >= 1)] %>%
+	group_by(Species) %>%
+	summarise(mean_abu = mean(Speciesprop)) %>%
+           arrange(desc(mean_abu))
+
+ggV4_4 <- ggV4_4[ ggV4_4$Species != "", ]
+ggV4_4$Species <- gsub("s__","",ggV4_4$Species)
+ggV4_4[,"V4"] <- 1
+
+#Merge core data for V4
+ggV4_4 <- filter(ggV4_4, !(Species %in% ggV4_3$Species))
+ggV4_1 <- filter(ggV4_1, !(Species %in% ggV4_2$Species))
+ggV4_2 <- filter(ggV4_2, !(Species %in% ggV4_3$Species))
+
+
+V4_core <- rbind(ggV4_3[,c(1,3)], ggV4_2[,c(1,3)]) %>%
+  rbind(., ggV4_1[,c(1,3)]) %>%
+  rbind(., ggV4_4[,c(1,3)]) %>%
+  merge(., tax[,c("Genus","Species")], by="Species", all.x=TRUE)
+
+Species_core <- merge(V13_core,V4_core, by=c("Genus","Species"), all = TRUE) %>%
+  mutate(V1V3=if_else(is.na(V1V3),0,V1V3)) %>%
+  mutate(V4=if_else(is.na(V4),0,V4)) %>%         
+  mutate(Best=if_else(V1V3>V4,V1V3,V4))
+write.csv(Species_core, file="output/Species_core.csv", row.names=FALSE, quote=FALSE)
+```

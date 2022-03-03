@@ -1,0 +1,425 @@
+---
+title: "FigureS4: Distance decay rates"
+author: "Marta Nierychlo and Morten Simonsen Dueholm"
+date: "2021-08-25"
+---
+
+## R-packages
+```{r, eval=FALSE, message=FALSE, warning=FALSE}
+library(data.table)
+library(vegan)
+library(patchwork)
+library(ampvis2)
+library(geosphere)
+library(viridis)
+```
+
+#Load metadata and ASV/OTU data
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+#Load metadata
+seq_metadata <- read.csv("data/2020-07-03_Sequencing_metadata.txt", sep="\t")
+wwtp_metadata <- read.csv("data/DataS1_210413.txt", sep="\t")
+
+#Extract metadata for V13 samples
+seq_V13 <- seq_metadata[ , which(names(seq_metadata) %in% c("V13_seq_id","WWTP_id"))]
+V13_metadata <- merge.data.frame(seq_V13, wwtp_metadata, by ="WWTP_id", all.x = TRUE)
+V13_metadata$WWTP_ID <- V13_metadata$WWTP_id
+V13_metadata <- V13_metadata[,-1]
+
+#V13_ASVs
+
+
+d_V13ASV <- amp_load(otutab = "data/V13_ASVtab.txt", 
+                taxonomy = "data/V13ASV_vs_MiDAS_4.8.sintax",
+                metadata = V13_metadata)
+
+d_V13ASVn <- amp_subset_samples(d_V13ASV, minreads = 10000, normalise = TRUE)
+
+#Subset AS only in 4 basic process_type(s)
+d_V13ASVnAS <- amp_subset_samples(d_V13ASVn, Plant_type == "Activated sludge")
+d_V13ASVnAS4PT <-  amp_subset_samples(d_V13ASVn, Process_type %in% c("C", "C,N", "C,N,DN", "C,N,DN,P"))
+
+#V13_OTUs
+d_V13OTU <- amp_load(otutab = "data/V13_OTUtab.txt", 
+                taxonomy = "data/V13OTU.sintax",
+                metadata = V13_metadata)
+
+d_V13OTUn <- amp_subset_samples(d_V13OTU, minreads = 10000, normalise = TRUE)
+
+#Subset AS only in 4 basic process_type(s)
+d_V13OTUnAS <- amp_subset_samples(d_V13OTUn, Plant_type == "Activated sludge")
+d_V13OTUnAS4PT <-  amp_subset_samples(d_V13OTUnAS, Process_type %in% c("C", "C,N", "C,N,DN", "C,N,DN,P")) 
+```
+
+#DDR: V1-V3 Data
+```{r, eval=FALSE, message=FALSE, warning=FALSE}
+#prepare data
+pregeo_V13ASV <- d_V13ASVnAS4PT$metadata[ !is.na(d_V13ASVnAS4PT$metadata$Latitude), c("Longitude", "Latitude")]
+pregeo_V13ASV$Longitude <- as.numeric(pregeo_V13ASV$Longitude)
+pregeo_V13ASV$Latitude <- as.numeric(pregeo_V13ASV$Latitude)
+
+# Prepare ASV data
+abund_V13ASV <- t(d_V13ASVnAS4PT$abund)
+
+#subset Vxx_seq_id in abund data frame (rows) found in pregeo
+abund2_V13ASV <- abund_V13ASV[which(rownames(abund_V13ASV) %in% rownames(pregeo_V13ASV)),]
+#match order of pregeo rows acc. to uni_w_V13s2 rows
+pregeo2_V13ASV <- pregeo_V13ASV[match(rownames(abund2_V13ASV), rownames(pregeo_V13ASV)),]
+geo_V13ASV <- as.matrix(pregeo2_V13ASV)
+
+#calculate distance matrix (Bray-Curtis)
+dist.bray2_V13ASV = vegdist(abund2_V13ASV, method = "bray")
+
+#calculate geographic distance matrices
+d.geo_V13ASV = distm(geo_V13ASV, fun = distHaversine)
+dist.geo_V13ASV = as.dist(d.geo_V13ASV)
+
+#mantel test
+abund_geo_V13ASV_bc  <- mantel(dist.bray2_V13ASV, dist.geo_V13ASV, method = "spearman", permutations = 999, na.rm = TRUE)
+
+###visualize Distance Decay Relationship
+#convert microbial distance matrix to data frame
+df_V13ASV_bc <- melt(as.matrix(dist.bray2_V13ASV), varnames = c("Sample1", "Sample2"))
+
+#convert geo distance matrix to data frame
+dg_V13ASV_bc <- melt(as.matrix(dist.geo_V13ASV), varnames = c("x", "y"))
+
+names(df_V13ASV_bc)[names(df_V13ASV_bc) == "value"] <- "community"
+names(dg_V13ASV_bc)[names(dg_V13ASV_bc) == "value"] <- "geography"
+db_V13ASV_bc <- cbind(df_V13ASV_bc,dg_V13ASV_bc)
+db_V13ASV_bc[,"geo_km"] <- db_V13ASV_bc$geography/1000
+dbs_V13ASV_bc <- db_V13ASV_bc[(db_V13ASV_bc$geo_km != 0),]
+dbs_V13ASV_bc[,"geo_group"] <- ifelse(dbs_V13ASV_bc$geo_km>2500, 1,2)
+
+#lm R2
+model_V13ASV_bc1 <- lm((1-community) ~ geo_km, dbs_V13ASV_bc[dbs_V13ASV_bc$geo_km<2500,]);
+r2_V13ASV_bc1 <- format(summary(model_V13ASV_bc1)$r.squared, digits = 2)
+coeff_V13ASV_bc1 <- model_V13ASV_bc1$coefficients
+
+model_V13ASV_bc2 <- lm((1-community) ~ geo_km, dbs_V13ASV_bc[dbs_V13ASV_bc$geo_km>=2500,]);
+r2_V13ASV_bc2 <- format(summary(model_V13ASV_bc2)$r.squared, digits = 2)
+coeff_V13ASV_bc2 <- model_V13ASV_bc2$coefficients
+
+
+p1 <- ggplot(data = dbs_V13ASV_bc , aes(x = geo_km, y = (1-community))) +
+  geom_hex(bins = 150) +
+  annotate("text", x=10000, y=0.8, 
+           label= paste(c("y1=",format(model_V13ASV_bc1$coefficients[2], digits = 3, scientific = TRUE),
+                          "x+",format(model_V13ASV_bc1$coefficients[1], digits = 3)
+                          ,", R^2=",r2_V13ASV_bc1,
+                          "\ny2=",format(model_V13ASV_bc2$coefficients[2], digits = 3, scientific = TRUE),
+                          "x+",format(model_V13ASV_bc2$coefficients[1], digits = 3)
+                          ,", R^2=",r2_V13ASV_bc2,
+                          "\n\nMantel statistic R:",
+                          format(abund_geo_V13ASV_bc$statistic, digits = 3),
+                          "\nSignificance =",abund_geo_V13ASV_bc$signif),collapse = " "),
+           fontface="bold",hjust = 0) +
+  scale_fill_viridis(option="plasma", trans = "log10", breaks = c(1,10,100,1000), limits=c(1,5000)) +
+  stat_smooth(method = "lm", size = 1.3, color = "black", mapping=aes(group=geo_group)) +
+  scale_y_continuous(breaks = seq(0,1,0.2), limits=c(0,1)) +
+  xlab("Geographical distance (km)") + 
+  ylab("Bray-Curtis similarity for ASVs") +
+  theme_bw() +
+  theme(legend.position = "none")
+
+#calculate distance matrix (Soerensen)
+dist.sor_V13ASV = vegdist(abund2_V13ASV, method = "bray", binary = TRUE)
+
+#mantel test
+abund_geo_V13ASV_s  = mantel(dist.sor_V13ASV, dist.geo_V13ASV, method = "spearman", permutations = 999, na.rm = TRUE)
+
+#convert microbial distance matrix to data frame
+df_V13ASV_s <- melt(as.matrix(dist.sor_V13ASV), varnames = c("Sample1", "Sample2"))
+
+#convert geo distance matrix to data frame
+dg_V13ASV_s <- melt(as.matrix(dist.geo_V13ASV), varnames = c("x", "y"))
+
+names(df_V13ASV_s)[names(df_V13ASV_s) == "value"] <- "community"
+names(dg_V13ASV_s)[names(dg_V13ASV_s) == "value"] <- "geography"
+db_V13ASV_s <- cbind(df_V13ASV_s,dg_V13ASV_s)
+db_V13ASV_s[,"geo_km"] <- db_V13ASV_s$geography/1000
+dbs_V13ASV_s <- db_V13ASV_s[(db_V13ASV_s$geo_km != 0),]
+dbs_V13ASV_s[,"geo_group"] <- ifelse(dbs_V13ASV_s$geo_km>2500, 1,2)
+
+#lm R2
+model_V13ASV_s1 <- lm((1-community) ~ geo_km, dbs_V13ASV_s[dbs_V13ASV_s$geo_km<2500,]);
+r2_V13ASV_s1 <- format(summary(model_V13ASV_s1)$r.squared, digits = 2)
+coeff_V13ASV_s1 <- model_V13ASV_s1$coefficients
+
+model_V13ASV_s2 <- lm((1-community) ~ geo_km, dbs_V13ASV_s[dbs_V13ASV_s$geo_km>=2500,]);
+r2_V13ASV_s2 <- format(summary(model_V13ASV_s2)$r.squared, digits = 2)
+coeff_V13ASV_s2 <- model_V13ASV_s2$coefficients
+
+p2 <- ggplot(data = dbs_V13ASV_s , aes(x = geo_km, y = (1-community))) +
+  geom_hex(bins = 150) +
+  annotate("text", x=10000, y=0.8, 
+           label= paste(c("y1=",format(model_V13ASV_s1$coefficients[2], digits = 3, scientific = TRUE),
+                          "x+",format(model_V13ASV_s1$coefficients[1], digits = 3)
+                          ,", R^2=",r2_V13ASV_s1,
+                          "\ny2=",format(model_V13ASV_s2$coefficients[2], digits = 3, scientific = TRUE),
+                          "x+",format(model_V13ASV_s2$coefficients[1], digits = 3)
+                          ,", R^2=",r2_V13ASV_s2,
+                          "\n\nMantel statistic R:",
+                          format(abund_geo_V13ASV_s$statistic, digits = 3),
+                          "\nSignificance =",abund_geo_V13ASV_s$signif),collapse = " "),
+           fontface="bold",hjust = 0) +
+  scale_fill_viridis(option="plasma", trans = "log10", breaks = c(1,10,100,1000), limits=c(1,5000)) +
+  stat_smooth(method = "lm", size = 1.3, color = "black", mapping=aes(group=geo_group)) +
+  scale_y_continuous(breaks = seq(0,1,0.2), limits=c(0,1)) +
+  xlab("Geographical distance (km)") + 
+  ylab("Soerensen similarity for ASVs") +
+  theme_bw() +
+  theme(legend.position = "none")
+
+#DDR: V1-V3 OTUs
+#prepare data
+pregeo_V13OTU <- d_V13OTUnAS4PT$metadata[ !is.na(d_V13OTUnAS4PT$metadata$Latitude), c("Longitude", "Latitude")]
+pregeo_V13OTU$Longitude <- as.numeric(pregeo_V13OTU$Longitude)
+pregeo_V13OTU$Latitude <- as.numeric(pregeo_V13OTU$Latitude)
+
+#
+abund_V13OTU <- t(d_V13OTUnAS4PT$abund)
+
+#subset Vxx_seq_id in abund data frame (rows) found in pregeo
+abund2_V13OTU <- abund_V13OTU[which(rownames(abund_V13OTU) %in% rownames(pregeo_V13OTU)),]
+#match order of pregeo rows acc. to uni_w_V13s2 rows
+pregeo2_V13OTU <- pregeo_V13OTU[match(rownames(abund2_V13OTU), rownames(pregeo_V13OTU)),]
+geo_V13OTU <- as.matrix(pregeo2_V13OTU)
+
+#calculate distance matrix (Bray-Curtis)
+dist.bray2_V13OTU = vegdist(abund2_V13OTU, method = "bray")
+
+#calculate geographic distance matrices
+d.geo_V13OTU = distm(geo_V13OTU, fun = distHaversine)
+dist.geo_V13OTU = as.dist(d.geo_V13OTU)
+
+#mantel test
+abund_geo_V13OTU_bc  <- mantel(dist.bray2_V13OTU, dist.geo_V13OTU, method = "spearman", permutations = 999, na.rm = TRUE)
+
+###visualize Distance Decay Relationship
+#convert microbial distance matrix to data frame
+df_V13OTU_bc <- melt(as.matrix(dist.bray2_V13OTU), varnames = c("Sample1", "Sample2"))
+
+#convert geo distance matrix to data frame
+dg_V13OTU_bc <- melt(as.matrix(dist.geo_V13OTU), varnames = c("x", "y"))
+
+names(df_V13OTU_bc)[names(df_V13OTU_bc) == "value"] <- "community"
+names(dg_V13OTU_bc)[names(dg_V13OTU_bc) == "value"] <- "geography"
+db_V13OTU_bc <- cbind(df_V13OTU_bc,dg_V13OTU_bc)
+db_V13OTU_bc[,"geo_km"] <- db_V13OTU_bc$geography/1000
+dbs_V13OTU_bc <- db_V13OTU_bc[(db_V13OTU_bc$geo_km != 0),]
+dbs_V13OTU_bc[,"geo_group"] <- ifelse(dbs_V13OTU_bc$geo_km>2500, 1,2)
+
+#lm R2
+model_V13OTU_bc1 <- lm((1-community) ~ geo_km, dbs_V13OTU_bc[dbs_V13OTU_bc$geo_km<2500,]);
+r2_V13OTU_bc1 <- format(summary(model_V13OTU_bc1)$r.squared, digits = 2)
+coeff_V13OTU_bc1 <- model_V13OTU_bc1$coefficients
+
+model_V13OTU_bc2 <- lm((1-community) ~ geo_km, dbs_V13OTU_bc[dbs_V13OTU_bc$geo_km>=2500,]);
+r2_V13OTU_bc2 <- format(summary(model_V13OTU_bc2)$r.squared, digits = 2)
+coeff_V13OTU_bc2 <- model_V13OTU_bc2$coefficients
+
+
+p3 <- ggplot(data = dbs_V13OTU_bc , aes(x = geo_km, y = (1-community))) +
+  geom_hex(bins = 150) +
+  annotate("text", x=10000, y=0.8, 
+           label= paste(c("y1=",format(model_V13OTU_bc1$coefficients[2], digits = 3, scientific = TRUE),
+                          "x+",format(model_V13OTU_bc1$coefficients[1], digits = 3)
+                          ,", R^2=",r2_V13OTU_bc1,
+                          "\ny2=",format(model_V13OTU_bc2$coefficients[2], digits = 3, scientific = TRUE),
+                          "x+",format(model_V13OTU_bc2$coefficients[1], digits = 3)
+                          ,", R^2=",r2_V13OTU_bc2,
+                          "\n\nMantel statistic R:",
+                          format(abund_geo_V13OTU_bc$statistic, digits = 3),
+                          "\nSignificance =",abund_geo_V13OTU_bc$signif),collapse = " "),
+           fontface="bold",hjust = 0) +
+  scale_fill_viridis(option="plasma", trans = "log10", breaks = c(1,10,100,1000), limits=c(1,5000)) +
+  stat_smooth(method = "lm", size = 1.3, color = "black", mapping=aes(group=geo_group)) +
+  scale_y_continuous(breaks = seq(0,1,0.2), limits=c(0,1)) +
+  xlab("Geographical distance (km)") + 
+  ylab("Bray-Curtis similarity for OTUs") +
+  theme_bw() +
+  theme(legend.position = "none")
+
+#calculate distance matrix (Soerensen)
+dist.sor_V13OTU = vegdist(abund2_V13OTU, method = "bray", binary = TRUE)
+
+#mantel test
+abund_geo_V13OTU_s  = mantel(dist.sor_V13OTU, dist.geo_V13OTU, method = "spearman", permutations = 999, na.rm = TRUE)
+
+#convert microbial distance matrix to data frame
+df_V13OTU_s <- melt(as.matrix(dist.sor_V13OTU), varnames = c("Sample1", "Sample2"))
+
+#convert geo distance matrix to data frame
+dg_V13OTU_s <- melt(as.matrix(dist.geo_V13OTU), varnames = c("x", "y"))
+
+names(df_V13OTU_s)[names(df_V13OTU_s) == "value"] <- "community"
+names(dg_V13OTU_s)[names(dg_V13OTU_s) == "value"] <- "geography"
+db_V13OTU_s <- cbind(df_V13OTU_s,dg_V13OTU_s)
+db_V13OTU_s[,"geo_km"] <- db_V13OTU_s$geography/1000
+dbs_V13OTU_s <- db_V13OTU_s[(db_V13OTU_s$geo_km != 0),]
+dbs_V13OTU_s[,"geo_group"] <- ifelse(dbs_V13OTU_s$geo_km>2500, 1,2)
+
+#lm R2
+model_V13OTU_s1 <- lm((1-community) ~ geo_km, dbs_V13OTU_s[dbs_V13OTU_s$geo_km<2500,]);
+r2_V13OTU_s1 <- format(summary(model_V13OTU_s1)$r.squared, digits = 2)
+coeff_V13OTU_s1 <- model_V13OTU_s1$coefficients
+
+model_V13OTU_s2 <- lm((1-community) ~ geo_km, dbs_V13OTU_s[dbs_V13OTU_s$geo_km>=2500,]);
+r2_V13OTU_s2 <- format(summary(model_V13OTU_s2)$r.squared, digits = 2)
+coeff_V13OTU_s2 <- model_V13OTU_s2$coefficients
+
+p4 <- ggplot(data = dbs_V13OTU_s , aes(x = geo_km, y = (1-community))) +
+  geom_hex(bins = 150) +
+  annotate("text", x=10000, y=0.8, 
+           label= paste(c("y1=",format(model_V13OTU_s1$coefficients[2], digits = 3, scientific = TRUE),
+                          "x+",format(model_V13OTU_s1$coefficients[1], digits = 3)
+                          ,", R^2=",r2_V13OTU_s1,
+                          "\ny2=",format(model_V13OTU_s2$coefficients[2], digits = 3, scientific = TRUE),
+                          "x+",format(model_V13OTU_s2$coefficients[1], digits = 3)
+                          ,", R^2=",r2_V13OTU_s2,
+                          "\n\nMantel statistic R:",
+                          format(abund_geo_V13OTU_s$statistic, digits = 3),
+                          "\nSignificance =",abund_geo_V13OTU_s$signif),collapse = " "),
+           fontface="bold",hjust = 0) +
+  scale_fill_viridis(option="plasma", trans = "log10", breaks = c(1,10,100,1000), limits=c(1,5000)) +
+  stat_smooth(method = "lm", size = 1.3, color = "black", mapping=aes(group=geo_group)) +
+  scale_y_continuous(breaks = seq(0,1,0.2), limits=c(0,1)) +
+  xlab("Geographical distance (km)") + 
+  ylab("Soerensen similarity for OTUs") +
+  theme_bw()
+
+#DDR: V1-V3 Genera
+#prepare data
+pregeo_V13genera <- d_V13ASVnAS4PT$metadata[ !is.na(d_V13ASVnAS4PT$metadata$Latitude), c("Longitude", "Latitude")]
+pregeo_V13genera$Longitude <- as.numeric(pregeo_V13genera$Longitude)
+pregeo_V13genera$Latitude <- as.numeric(pregeo_V13genera$Latitude)
+
+# Prepare genus data
+#remove ASVs with no Genus classification
+ASVs_nogenus <- as.character(d_V13ASVnAS4PT$tax[d_V13ASVnAS4PT$tax$Genus == "" | is.na(d_V13ASVnAS4PT$tax$Genus),"OTU"])
+d_V13ASVnAS4PT_genus <- amp_subset_taxa(d_V13ASVnAS4PT, tax_vector = ASVs_nogenus, remove = TRUE)
+
+gV13 <- amp_heatmap(d_V13ASVnAS4PT_genus,
+            tax_aggregate = "Genus",
+            tax_show = 10000,
+            normalise = FALSE,
+            textmap = TRUE
+            )
+
+abund_V13genera <- t(gV13)
+
+#subset Vxx_seq_id in abund data frame (rows) found in pregeo
+abund2_V13genera <- abund_V13genera[which(rownames(abund_V13genera) %in% rownames(pregeo_V13genera)),]
+#match order of pregeo rows acc. to uni_w_V13s2 rows
+pregeo2_V13genera <- pregeo_V13genera[match(rownames(abund2_V13genera), rownames(pregeo_V13genera)),]
+geo_V13genera <- as.matrix(pregeo2_V13genera)
+
+#calculate distance matrix (Bray-Curtis)
+dist.bray2_V13genera = vegdist(abund2_V13genera, method = "bray")
+
+#calculate geographic distance matrices
+d.geo_V13genera = distm(geo_V13genera, fun = distHaversine)
+dist.geo_V13genera = as.dist(d.geo_V13genera)
+
+#mantel test
+abund_geo_V13genera_bc  <- mantel(dist.bray2_V13genera, dist.geo_V13genera, method = "spearman", permutations = 999, na.rm = TRUE)
+
+###visualize Distance Decay Relationship
+#convert microbial distance matrix to data frame
+df_V13genera_bc <- melt(as.matrix(dist.bray2_V13genera), varnames = c("Sample1", "Sample2"))
+
+#convert geo distance matrix to data frame
+dg_V13genera_bc <- melt(as.matrix(dist.geo_V13genera), varnames = c("x", "y"))
+
+names(df_V13genera_bc)[names(df_V13genera_bc) == "value"] <- "community"
+names(dg_V13genera_bc)[names(dg_V13genera_bc) == "value"] <- "geography"
+db_V13genera_bc <- cbind(df_V13genera_bc,dg_V13genera_bc)
+db_V13genera_bc[,"geo_km"] <- db_V13genera_bc$geography/1000
+dbs_V13genera_bc <- db_V13genera_bc[(db_V13genera_bc$geo_km != 0),]
+dbs_V13genera_bc[,"geo_group"] <- ifelse(dbs_V13genera_bc$geo_km>2500, 1,2)
+
+#lm R2
+model_V13genera_bc1 <- lm((1-community) ~ geo_km, dbs_V13genera_bc[dbs_V13genera_bc$geo_km<2500,]);
+r2_V13genera_bc1 <- format(summary(model_V13genera_bc1)$r.squared, digits = 2)
+coeff_V13genera_bc1 <- model_V13genera_bc1$coefficients
+
+model_V13genera_bc2 <- lm((1-community) ~ geo_km, dbs_V13genera_bc[dbs_V13genera_bc$geo_km>=2500,]);
+r2_V13genera_bc2 <- format(summary(model_V13genera_bc2)$r.squared, digits = 2)
+coeff_V13genera_bc2 <- model_V13genera_bc2$coefficients
+
+p5 <- ggplot(data = dbs_V13genera_bc , aes(x = geo_km, y = (1-community))) +
+  geom_hex(bins = 150) +
+  annotate("text", x=10000, y=0.8, 
+           label= paste(c("y1=",format(model_V13genera_bc1$coefficients[2], digits = 3, scientific = TRUE),
+                          "x+",format(model_V13genera_bc1$coefficients[1], digits = 3)
+                          ,", R^2=",r2_V13genera_bc1,
+                          "\ny2=",format(model_V13genera_bc2$coefficients[2], digits = 3, scientific = TRUE),
+                          "x+",format(model_V13genera_bc2$coefficients[1], digits = 3)
+                          ,", R^2=",r2_V13genera_bc2,
+                          "\n\nMantel statistic R:",
+                          format(abund_geo_V13genera_bc$statistic, digits = 3),
+                          "\nSignificance =",abund_geo_V13genera_bc$signif),collapse = " "),
+           fontface="bold",hjust = 0) +
+  scale_fill_viridis(option="plasma", trans = "log10", breaks = c(1,10,100,1000), limits=c(1,5000)) +
+  stat_smooth(method = "lm", size = 1.3, color = "black", mapping=aes(group=geo_group)) +
+  scale_y_continuous(breaks = seq(0,1,0.2), limits=c(0,1)) +
+  xlab("Geographical distance (km)") + 
+  ylab("Bray-Curtis similarity for genera") +
+  theme_bw() +
+  theme(legend.position = "none")
+
+#calculate distance matrix (Soerensen)
+dist.sor_V13genera = vegdist(abund2_V13genera, method = "bray", binary = TRUE)
+
+#mantel test
+abund_geo_V13genera_s  = mantel(dist.sor_V13genera, dist.geo_V13genera, method = "spearman", permutations = 999, na.rm = TRUE)
+
+#convert microbial distance matrix to data frame
+df_V13genera_s <- melt(as.matrix(dist.sor_V13genera), varnames = c("Sample1", "Sample2"))
+
+#convert geo distance matrix to data frame
+dg_V13genera_s <- melt(as.matrix(dist.geo_V13genera), varnames = c("x", "y"))
+
+names(df_V13genera_s)[names(df_V13genera_s) == "value"] <- "community"
+names(dg_V13genera_s)[names(dg_V13genera_s) == "value"] <- "geography"
+db_V13genera_s <- cbind(df_V13genera_s,dg_V13genera_s)
+db_V13genera_s[,"geo_km"] <- db_V13genera_s$geography/1000
+dbs_V13genera_s <- db_V13genera_s[(db_V13genera_s$geo_km != 0),]
+dbs_V13genera_s[,"geo_group"] <- ifelse(dbs_V13genera_s$geo_km>2500, 1,2)
+
+#lm R2
+model_V13genera_s1 <- lm((1-community) ~ geo_km, dbs_V13genera_s[dbs_V13genera_s$geo_km<2500,]);
+r2_V13genera_s1 <- format(summary(model_V13genera_s1)$r.squared, digits = 2)
+coeff_V13genera_s1 <- model_V13genera_s1$coefficients
+
+model_V13genera_s2 <- lm((1-community) ~ geo_km, dbs_V13genera_s[dbs_V13genera_s$geo_km>=2500,]);
+r2_V13genera_s2 <- format(summary(model_V13genera_s2)$r.squared, digits = 2)
+coeff_V13genera_s2 <- model_V13genera_s2$coefficients
+
+p6 <- ggplot(data = dbs_V13genera_s , aes(x = geo_km, y = (1-community))) +
+  geom_hex(bins = 150) +
+  annotate("text", x=10000, y=0.8, 
+           label= paste(c("y1=",format(model_V13genera_s1$coefficients[2], digits = 3, scientific = TRUE),
+                          "x+",format(model_V13genera_s1$coefficients[1], digits = 3)
+                          ,", R^2=",r2_V13genera_s1,
+                          "\ny2=",format(model_V13genera_s2$coefficients[2], digits = 3, scientific = TRUE),
+                          "x+",format(model_V13genera_s2$coefficients[1], digits = 3)
+                          ,", R^2=",r2_V13genera_s2,
+                          "\n\nMantel statistic R:",
+                          format(abund_geo_V13genera_s$statistic, digits = 3),
+                          "\nSignificance =",abund_geo_V13genera_s$signif),collapse = " "),
+           fontface="bold",hjust = 0) +
+  scale_fill_viridis(option="plasma", trans = "log10", breaks = c(1,10,100,1000), limits=c(1,5000)) +
+  stat_smooth(method = "lm", size = 1.3, color = "black", mapping=aes(group=geo_group)) +
+  scale_y_continuous(breaks = seq(0,1,0.2), limits=c(0,1)) +
+  xlab("Geographical distance (km)") + 
+  ylab("Soerensen similarity for genera") +
+  theme_bw() +
+  theme(legend.position = "none")
+
+p <- p1 +p2 + p3 + p4 + p5 + p6 +
+  plot_layout(ncol=2) & theme(text = element_text(size=14))
+
+ggsave(filename="output/FigureS4_Distance_decay_rates.pdf", plot=p, width=12, height=12, useDingbats=FALSE, limitsize=FALSE)
+```

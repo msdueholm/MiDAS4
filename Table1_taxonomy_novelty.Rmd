@@ -1,0 +1,38 @@
+---
+title: "Table 1: Taxonomy novelty"
+author: "Morten Simonsen Dueholm"
+date: "2021-08-25"
+---
+
+## R-packages
+```{r, eval=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+library(tidyverse)
+```
+
+## Import data
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+# Read mapping results
+df <- read.delim("data/tax_complete.csv",
+                      sep = ",",
+                      header = TRUE,
+                      quote = "\"",
+                      fill = TRUE,
+                      check.names = FALSE,
+                      stringsAsFactors = FALSE) %>%
+  gather(2:8, key="tax_rank", value = "tax") %>%
+  mutate(tax_rank=factor(tax_rank, levels=c("Kingdom","Phylum","Class","Order","Family","Genus","Species")))
+```
+
+# Novelty Calculations
+```{r, eval=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+Novelty <- df %>%
+  group_by(tax_rank) %>%
+  summarize("Total_taxa"=n_distinct(tax),
+            "Denovo_taxa"=n_distinct(str_extract(tax,"^midas_.+"),na.rm = TRUE),
+            "Percent_denovo" = round(Denovo_taxa/Total_taxa*100,2))
+```
+
+#Export
+```{r, eval=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+write_csv(Novelty, "output/Table1_Taxonomy_novelty.csv")
+```

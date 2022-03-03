@@ -1,0 +1,62 @@
+---
+title: "Figure SI-1: Full-length 16S rRNA amplicon error rate"
+author: "Morten Simonsen Dueholm"
+date: "2021-08-25"
+---
+
+## Load required R-packages
+```{r, eval=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+library(tidyverse)
+```
+
+## Import data
+```{r, warning=F, message=FALSE}
+dfTaq <- read_delim(file = "data/Taq.b6", 
+                 delim = "\t", 
+                 col_names = c("Query", "Target", "Identity","Length", "Mismatch",
+                               "Gaps", "StartQ", "EndQ", "StartT", "EndT", "Evalue",
+                               "BitScore")) %>%
+  mutate(Polymerase="Taq Polymerase")
+
+dfFusion <- read_delim(file = "data/Fusion.b6", 
+                 delim = "\t", 
+                 col_names = c("Query", "Target", "Identity","Length", "Mismatch",
+                               "Gaps", "StartQ", "EndQ", "StartT", "EndT", "Evalue",
+                               "BitScore")) %>%
+  mutate(Polymerase="Phusion High-Fidelity DNA Polymerase")
+
+# Merge data frames and set all mismatches >10 to 10.
+df <- rbind(dfTaq, dfFusion) %>%
+  mutate(Mismatch2=ifelse(Mismatch<10,Mismatch,10)) %>%
+  mutate(Polymerase = factor(Polymerase, levels =c("Taq Polymerase","Phusion High-Fidelity DNA Polymerase")))
+```
+
+## Summarize the data
+```{r, eval=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+Summary1 <- df %>%
+  group_by(Polymerase) %>%
+  summarise(Total_counts=n())
+
+Summary2 <- df %>%
+  group_by(Polymerase, Mismatch2) %>%
+  summarise(Counts=n())
+
+Summary3 <- left_join(Summary2, Summary1, by = "Polymerase") %>%
+  mutate(Percentage = Counts/Total_counts*100)
+```
+
+
+## Create and export plot
+```{r, eval=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+p <- ggplot(Summary3, aes(x=Mismatch2, y=Percentage, fill=Polymerase)) +
+  theme_bw() +
+  facet_wrap(~Polymerase, ncol=1) +
+  scale_fill_brewer(palette="RdYlBu")+
+  scale_x_continuous(breaks=seq(0,10,1)) +
+  scale_y_continuous(breaks=seq(0,100,5)) +
+  geom_col(color="black") +
+  theme(legend.position = "none") +
+  ylab("Percent of sequences") + xlab("Number of mismatches")
+
+ggsave(filename="output/FigureS1.pdf", plot=p, width=6, height=5, useDingbats=FALSE, limitsize=FALSE)
+```

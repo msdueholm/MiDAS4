@@ -1,0 +1,471 @@
+---
+title: "Figure S6: Beta-diversity for V4"
+author: "Marta Nierychlo and Morten Simonsen Dueholm"
+date: "2021-08-25"
+---
+
+#Load packages
+```{r load_packages, message=FALSE, warning=FALSE, echo=FALSE, include=FALSE}
+library(ampvis2)
+library(tidyverse)
+library(vegan)
+library(ggrepel)
+library(patchwork)
+```
+
+#Load V4 data
+```{r MD data}
+#load metadata
+seq_metadata <- read.csv("data/2020-07-03_Sequencing_metadata.txt", sep="\t")
+wwtp_m <- read.csv("data/DataS1_210413.txt", sep="\t") %>%
+  mutate(ClimateZone2 = substr(ClimateZone,1,1))
+
+#Subset metadata based on V1-V3 samples
+seq_V4 <- seq_metadata[ , which(names(seq_metadata) %in% c("V4_seq_id","WWTP_id"))]
+
+V4metadata <- merge.data.frame(seq_V4, wwtp_m, by ="WWTP_id", all.x = TRUE)
+V4metadata$WWTP_ID <- V4metadata$WWTP_id
+V4metadata <- V4metadata[,-1] %>%
+  mutate(V4_seq_id=gsub("-",".",V4_seq_id))
+
+
+#Load V4ASV table and taxonomy manually
+V4ASVtab <- read.csv("data/V4_ASVtab.txt", sep="\t") %>%
+  rename("ASV" = X.OTU.ID)
+
+V4ASVtax <- read.csv("data/V4ASV_vs_MiDAS_4.8.sintax", sep="\t", header = FALSE) %>%
+  select(1,4) %>%
+  mutate(V4=gsub(":","__",V4)) %>%
+  separate(V4, c("Kingdom","Phylum","Class","Order","Family","Genus","Species"), sep=",") %>%
+  rename("ASV" = V1)
+
+usearch_otutable <- merge.data.frame(V4ASVtab, V4ASVtax, by ="ASV", all.x = TRUE)
+
+
+#Convert ASV to genus-table
+usearch_gtable <- mutate(usearch_otutable, Species=NA) %>%
+  mutate(Kingdom=ifelse(is.na(Genus),NA,Kingdom)) %>%
+  mutate(Phylum=ifelse(is.na(Genus),NA,Phylum)) %>%
+  mutate(Class=ifelse(is.na(Genus),NA,Class)) %>%         
+  mutate(Order=ifelse(is.na(Genus),NA,Order)) %>%
+  mutate(Family=ifelse(is.na(Genus),NA,Family)) %>%
+  mutate(OTU=substr(Genus,4,100)) %>%
+  group_by(OTU,Kingdom, Phylum, Class, Order, Family, Genus, Species) %>%
+  summarise(across(starts_with("V4"), sum)) %>%
+  relocate(c(Kingdom, Phylum, Class, Order, Family, Genus, Species), .after = last_col()) %>%
+  mutate(OTU=ifelse(is.na(OTU),"Unclassified",OTU))
+
+
+d4 <- amp_load(otutable = usearch_gtable, 
+              metadata = V4metadata)
+
+d4n <- amp_subset_samples(d4, minreads = 10000, normalise = TRUE)
+
+#Subset AS only in 4 basic process_type(s)
+d4nAS <- amp_subset_samples(d4n, Plant_type == "Activated sludge")
+d4nAS4PT <-  amp_subset_samples(d4nAS, Process_type %in% c("C", "C,N", "C,N,DN", "C,N,DN,P"))  
+
+#remove ASVs with no Genus classification
+ASVs_nogenus <- as.character(d4nAS4PT$tax[d4nAS4PT$tax$Genus == "" | is.na(d4nAS4PT$tax$Genus),"OTU"])
+d4nAS4PT_genus <- amp_subset_taxa(d4nAS4PT, tax_vector = ASVs_nogenus, remove = TRUE)
+```
+##Create ordinations
+```{r}
+# Remove samples with missing metadata
+d4nAS4PT_genus <- amp_subset_samples(d4nAS4PT_genus, !(is.na(Temp_range) | Temp_range==""))
+d4nAS4PT_genus <- amp_subset_samples(d4nAS4PT_genus, !(is.na(ClimateZone2) | ClimateZone2==""))
+d4nAS4PT_genus <- amp_subset_samples(d4nAS4PT_genus, !(is.na(Continent) | Continent==""))
+d4nAS4PT_genus <- amp_subset_samples(d4nAS4PT_genus, !(is.na(ind_text) | ind_text==""))
+d4nAS4PT_genus <- amp_subset_samples(d4nAS4PT_genus, !(is.na(Process_type) | Process_type==""))
+
+# Order factors
+d4nAS4PT_genus$metadata$Temp_range <- factor(d4nAS4PT_genus$metadata$Temp_range, levels=c("very low", "low", "moderate", "high", "very high", "extremely high"))
+d4nAS4PT_genus$metadata$ind_text <- factor(d4nAS4PT_genus$metadata$ind_text, levels=c("none", "very_low", "low", "medium", "high", "all"))
+d4nAS4PT_genus$metadata$Process_type <- factor(d4nAS4PT_genus$metadata$Process_type, levels=c("C", "C,N", "C,N,DN", "C,N,DN,P"))
+
+
+######################
+#~Process type
+######################
+# PCoA plot (Bray-Curtis diversity of genera)
+p1a <- amp_ordinate(d4nAS4PT_genus,
+             type = "PCoA",
+             transform="none",
+             distmeasure = "bray",
+             sample_color_by = "Process_type",
+             sample_point_size = 3,
+             filter_species = 0,
+             sample_colorframe = FALSE)+
+  theme_bw() +
+  theme(legend.position = "top",
+        text = element_text(size = 20),
+        axis.text.y = element_text(colour = "black"), 
+        axis.text.x = element_text(colour = "black"))+
+  scale_color_brewer(palette="RdYlBu")
+p1a$layers[[1]]$aes_params$alpha <- 1
+
+# PCoA plot (Soerensen diversity of genera)
+p1b <- amp_ordinate(d4nAS4PT_genus,
+             type = "PCoA",
+             transform="pa",
+             distmeasure = "bray",
+             sample_color_by = "Process_type",
+             sample_point_size = 3,
+             filter_species = 0.001,
+             sample_colorframe = FALSE)+
+  theme_bw() +
+  theme(legend.position = "none",
+        text = element_text(size = 20),
+        axis.text.y = element_text(colour = "black"), 
+        axis.text.x = element_text(colour = "black"))+
+  scale_color_brewer(palette="RdYlBu")
+p1b$layers[[1]]$aes_params$alpha <- 1
+
+# RDA plot
+p1c_raw <- amp_ordinate(d4nAS4PT_genus,
+             type = "RDA",
+             constrain = "Process_type",
+             sample_color_by = "Process_type",
+             sample_point_size = 3,
+             filter_species = 0,
+             transform = "hellinger",
+             sample_colorframe = FALSE,
+             detailed_output = TRUE)
+
+p1c <- p1c_raw$plot +
+    theme_bw() +
+  theme(legend.position = "top",
+        text = element_text(size = 20),
+        axis.text.y = element_text(colour = "black"), 
+        axis.text.x = element_text(colour = "black"))+
+  scale_color_brewer(palette="RdYlBu")
+p1c$layers[[1]]$aes_params$alpha <- 1
+
+RDA_scores1 <- as.data.frame(scores(p1c$plot_env$model, display = "species")) %>%
+  arrange(desc(abs(RDA1))) %>%
+  rename(Process_type_RDA1 = RDA1, Process_type_RDA2 = RDA2)
+RDA_scores1$Genus <- rownames(RDA_scores1)
+
+p1c <- p1c + geom_point(mapping = aes(Process_type_RDA1, Process_type_RDA2), data=RDA_scores1[1:10,], colour="black",size=2) +
+  geom_label_repel(mapping=aes(x=Process_type_RDA1, y=Process_type_RDA2,label = Genus),data=RDA_scores1[1:10,],
+                  colour="black", max.overlaps = 100)
+
+######################
+#~Industrial load
+######################
+
+# PCoA plot (Bray-Curtis diversity of genera)
+p2a <- amp_ordinate(d4nAS4PT_genus,
+             type = "PCoA",
+             transform="none",
+             distmeasure = "bray",
+             sample_color_by = "ind_text",
+             sample_point_size = 3,
+             filter_species = 0,
+             sample_colorframe = FALSE)+
+  theme_bw() +
+  theme(legend.position = "top",
+        text = element_text(size = 20),
+        axis.title.y=element_blank(),
+        axis.text.y = element_blank(), 
+        axis.text.x = element_text(colour = "black"))+
+  scale_color_brewer(palette="RdYlBu", direction = -1)
+p2a$layers[[1]]$aes_params$alpha <- 1
+
+# PCoA plot (Soerensen diversity of genera)
+p2b <- amp_ordinate(d4nAS4PT_genus,
+             type = "PCoA",
+             transform="pa",
+             distmeasure = "bray",
+             sample_color_by = "ind_text",
+             sample_point_size = 3,
+             filter_species = 0.001,
+             sample_colorframe = FALSE)+
+  theme_bw() +
+  theme(legend.position = "none",
+        text = element_text(size = 20),
+        axis.title.y=element_blank(),
+        axis.text.y = element_blank(),
+        axis.text.x = element_text(colour = "black"))+
+  scale_color_brewer(palette="RdYlBu", direction = -1)
+p2b$layers[[1]]$aes_params$alpha <- 1
+
+# RDA plot
+p2c_raw <- amp_ordinate(d4nAS4PT_genus,
+             type = "RDA",
+             constrain = "ind_text",
+             sample_color_by = "ind_text",
+             sample_point_size = 3,
+             filter_species = 0,
+             transform = "hellinger",
+             sample_colorframe = FALSE,
+             detailed_output = TRUE)
+
+p2c <- p2c_raw$plot +
+    theme_bw() +
+  theme(legend.position = "top",
+        text = element_text(size = 20),
+        axis.text.y = element_text(colour = "black"), 
+        axis.text.x = element_text(colour = "black"))+
+  scale_color_brewer(palette="RdYlBu", direction = -1)
+p2c$layers[[1]]$aes_params$alpha <- 1
+
+RDA_scores2 <- as.data.frame(scores(p2c$plot_env$model, display = "species")) %>%
+  arrange(desc(abs(RDA1))) %>%
+  rename(Industrial_load_RDA1 = RDA1, Industrial_load_RDA2 = RDA2)
+RDA_scores2$Genus <- rownames(RDA_scores2)
+
+p2c <- p2c + geom_point(mapping = aes(Industrial_load_RDA1, Industrial_load_RDA2), data=RDA_scores2[1:10,], colour="black",size=2) +
+  geom_label_repel(mapping=aes(x=Industrial_load_RDA1, y=Industrial_load_RDA2,label = Genus),data=RDA_scores2[1:10,],
+                  colour="black", max.overlaps = 100)
+
+######################
+#~Temp_range
+######################
+# PCoA plot (Bray-Curtis diversity of genera)
+p3a <- amp_ordinate(d4nAS4PT_genus,
+             type = "PCoA",
+             transform="none",
+             distmeasure = "bray",
+             sample_color_by = "Temp_range",
+             sample_point_size = 3,
+             filter_species = 0,
+             sample_colorframe = FALSE)+
+  theme_bw() +
+  theme(legend.position = "top",
+        text = element_text(size = 20),
+        axis.title.y=element_blank(),
+        axis.text.y = element_blank(),
+        axis.text.x = element_text(colour = "black"))+
+  scale_color_brewer(palette="RdYlBu", direction=-1)
+p3a$layers[[1]]$aes_params$alpha <- 1
+
+# PCoA plot (Soerensen diversity of genera)
+p3b <- amp_ordinate(d4nAS4PT_genus,
+             type = "PCoA",
+             transform="pa",
+             distmeasure = "bray",
+             sample_color_by = "Temp_range",
+             sample_point_size = 3,
+             filter_species = 0.001,
+             sample_colorframe = FALSE)+
+  theme_bw() +
+  theme(legend.position = "none",
+        text = element_text(size = 20),
+        axis.title.y=element_blank(),
+        axis.text.y = element_blank(),
+        axis.text.x = element_text(colour = "black"))+
+  scale_color_brewer(palette="RdYlBu", direction=-1)
+p3b$layers[[1]]$aes_params$alpha <- 1
+
+# RDA plot
+p3c_raw <- amp_ordinate(d4nAS4PT_genus,
+             type = "RDA",
+             constrain = "Temp_range",
+             sample_color_by = "Temp_range",
+             sample_point_size = 3,
+             filter_species = 0,
+             transform = "hellinger",
+             sample_colorframe = FALSE,
+             detailed_output = TRUE)
+
+p3c <- p3c_raw$plot +
+    theme_bw() +
+  theme(legend.position = "top",
+        text = element_text(size = 20),
+        axis.text.y = element_text(colour = "black"), 
+        axis.text.x = element_text(colour = "black"))+
+  scale_color_brewer(palette="RdYlBu", direction=-1)
+p3c$layers[[1]]$aes_params$alpha <- 1
+
+RDA_scores3 <- as.data.frame(scores(p3c$plot_env$model, display = "species")) %>%
+  arrange(desc(abs(RDA1))) %>%
+  rename(Temperature_RDA1 = RDA1, Temperature_RDA2 = RDA2)
+
+RDA_scores3$Genus <- rownames(RDA_scores3)
+
+p3c <- p3c + geom_point(mapping = aes(Temperature_RDA1, Temperature_RDA2), data=RDA_scores3[1:10,], colour="black",size=2) + geom_label_repel(mapping=aes(x=Temperature_RDA1, y=Temperature_RDA2,label = Genus),data=RDA_scores3[1:10,], 
+                  colour="black", max.overlaps = 100)
+
+######################
+#~Continent
+######################
+# PCoA plot (Bray-Curtis diversity of genera)
+p4a <- amp_ordinate(d4nAS4PT_genus,
+             type = "PCoA",
+             transform="none",
+             distmeasure = "bray",
+             sample_color_by = "Continent",
+             sample_point_size = 3,
+             filter_species = 0,
+             sample_colorframe = FALSE)+
+  theme_bw() +
+  theme(legend.position = "top",
+        text = element_text(size = 20),
+        axis.title.y=element_blank(),
+        axis.text.y = element_blank(),
+        axis.text.x = element_text(colour = "black"))+
+  scale_color_brewer(palette="RdYlBu")
+p4a$layers[[1]]$aes_params$alpha <- 1
+
+# PCoA plot (Soerensen diversity of genera)
+p4b <- amp_ordinate(d4nAS4PT_genus,
+             type = "PCoA",
+             transform="pa",
+             distmeasure = "bray",
+             sample_color_by = "Continent",
+             sample_point_size = 3,
+             filter_species = 0.001,
+             sample_colorframe = FALSE)+
+  theme_bw() +
+  theme(legend.position = "none",
+        text = element_text(size = 20),
+        axis.title.y=element_blank(),
+        axis.text.y = element_blank(),
+        axis.text.x = element_text(colour = "black"))+
+  scale_color_brewer(palette="RdYlBu")
+p4b$layers[[1]]$aes_params$alpha <- 1
+
+# RDA plot
+p4c_raw <- amp_ordinate(d4nAS4PT_genus,
+             type = "RDA",
+             constrain = "Continent",
+             sample_color_by = "Continent",
+             sample_point_size = 3,
+             filter_species = 0,
+             transform = "hellinger",
+             sample_colorframe = FALSE,
+             detailed_output = TRUE)
+
+p4c <- p4c_raw$plot +
+    theme_bw() +
+  theme(legend.position = "top",
+        text = element_text(size = 20),
+        axis.text.y = element_text(colour = "black"), 
+        axis.text.x = element_text(colour = "black"))+
+  scale_color_brewer(palette="RdYlBu")
+p4c$layers[[1]]$aes_params$alpha <- 1
+
+RDA_scores4 <- as.data.frame(scores(p4c$plot_env$model, display = "species")) %>%
+  arrange(desc(abs(RDA1))) %>%
+  rename(Continent_RDA1 = RDA1, Continent_RDA2 = RDA2)
+RDA_scores4$Genus <- rownames(RDA_scores4)
+
+p4c <- p4c + geom_point(mapping = aes(Continent_RDA1, Continent_RDA2), data=RDA_scores4[1:10,], colour="black",size=2) + geom_label_repel(mapping=aes(x=Continent_RDA1, y=Continent_RDA2,label = Genus),data=RDA_scores4[1:10,],
+                  colour="black", max.overlaps = 100)
+
+######################
+#~Climate Zone
+######################
+# PCoA plot (Bray-Curtis diversity of genera)
+p5a <- amp_ordinate(d4nAS4PT_genus,
+             type = "PCoA",
+             transform="none",
+             distmeasure = "bray",
+             sample_color_by = "ClimateZone2",
+             sample_point_size = 3,
+             filter_species = 0,
+             sample_colorframe = FALSE)+
+  theme_bw() +
+  theme(legend.position = "top",
+        text = element_text(size = 20),
+        axis.title.y=element_blank(),
+        axis.text.y = element_blank(),
+        axis.text.x = element_text(colour = "black"))+
+  scale_color_brewer(palette="RdYlBu")
+p5a$layers[[1]]$aes_params$alpha <- 1
+
+# PCoA plot (Soerensen diversity of genera)
+p5b <- amp_ordinate(d4nAS4PT_genus,
+             type = "PCoA",
+             transform="pa",
+             distmeasure = "bray",
+             sample_color_by = "ClimateZone2",
+             sample_point_size = 3,
+             filter_species = 0.001,
+             sample_colorframe = FALSE)+
+  theme_bw() +
+  theme(legend.position = "none",
+        text = element_text(size = 20),
+        axis.title.y=element_blank(),
+        axis.text.y = element_blank(),
+        axis.text.x = element_text(colour = "black"))+
+  scale_color_brewer(palette="RdYlBu")
+p5b$layers[[1]]$aes_params$alpha <- 1
+
+# RDA plot
+p5c_raw <- amp_ordinate(d4nAS4PT_genus,
+             type = "RDA",
+             constrain = "ClimateZone2",
+             sample_color_by = "ClimateZone2",
+             sample_point_size = 3,
+             filter_species = 0,
+             transform = "hellinger",
+             sample_colorframe = FALSE,
+             detailed_output = TRUE)
+
+p5c <- p5c_raw$plot +
+    theme_bw() +
+  theme(legend.position = "top",
+        text = element_text(size = 20),
+        axis.text.y = element_text(colour = "black"), 
+        axis.text.x = element_text(colour = "black"))+
+  scale_color_brewer(palette="RdYlBu")
+p5c$layers[[1]]$aes_params$alpha <- 1
+
+RDA_scores5 <- as.data.frame(scores(p5c$plot_env$model, display = "species")) %>%
+  arrange(desc(abs(RDA1))) %>%
+  rename(ClimateZone_RDA1 = RDA1, ClimateZone_RDA2 = RDA2)
+RDA_scores5$Genus <- rownames(RDA_scores5)
+
+
+p5c <- p5c + geom_point(mapping = aes(ClimateZone_RDA1, ClimateZone_RDA2), data=RDA_scores5[1:10,], colour="black",size=2) + geom_label_repel(mapping=aes(x=ClimateZone_RDA1, y=ClimateZone_RDA2,label = Genus),data=RDA_scores5[1:10,],
+                  colour="black", max.overlaps = 100)
+
+
+######################
+#~Combined
+######################
+
+p1 <- ( p1a | p2a | p3a | p4a | p5a ) / ( p1b | p2b | p3b | p4b | p5b )
+ggsave(filename="output/FigureX_V4_Beta-diversity_PCoA.pdf", plot=p1, width=22, height=10, useDingbats=FALSE, limitsize=FALSE)
+
+p2 <- ( p1c | p2c | p2c )  / (p3c | p4c | p5c )
+ggsave(filename="output/FigureS6_V4_Beta-diversity_RDA.pdf", plot=p2, width=15, height=11.5, useDingbats=FALSE, limitsize=FALSE)
+
+RDA_scores <- merge(RDA_scores1, RDA_scores2, by = "Genus", all=TRUE)
+RDA_scores <- merge(RDA_scores, RDA_scores3, by = "Genus", all=TRUE)
+RDA_scores <- merge(RDA_scores, RDA_scores4, by = "Genus", all=TRUE)
+RDA_scores <- merge(RDA_scores, RDA_scores5, by = "Genus", all=TRUE)
+RDA_scores[is.na(RDA_scores)] = 0
+
+write.csv(RDA_scores,"output/DataS3_V4.csv", row.names = FALSE, quote = FALSE)
+
+######################
+#~ADONIS analyses 
+######################
+
+bc.dist.matrix <- vegdist(t(d4nAS4PT_genus$abund), method = "bray")
+s.dist.matrix <- vegdist(t(d4nAS4PT_genus$abund), method = "bray", binary = TRUE)
+metadata <- d4nAS4PT_genus$metadata
+
+# Temp_range
+adonis(bc.dist.matrix ~ Temp_range, data = metadata)
+adonis(s.dist.matrix ~ Temp_range, data = metadata)
+
+# Climate zone
+adonis(bc.dist.matrix ~ ClimateZone2, data = metadata)
+adonis(s.dist.matrix ~ ClimateZone2, data = metadata)
+
+# Continent
+adonis(bc.dist.matrix ~ Continent, data = metadata)
+adonis(s.dist.matrix ~ Continent, data = metadata)
+
+# Industrial load
+adonis(bc.dist.matrix ~ ind_text, data = metadata)
+adonis(s.dist.matrix ~ ind_text, data = metadata)
+
+# Process type
+adonis(bc.dist.matrix ~ Process_type, data = metadata)
+adonis(s.dist.matrix ~ Process_type, data = metadata)
+```

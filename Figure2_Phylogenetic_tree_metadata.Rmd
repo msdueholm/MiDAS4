@@ -1,0 +1,152 @@
+---
+title: "Figure 2: Phylogenetic trees showing novelty"
+author: "Morten Simonsen Dueholm"
+date: "2021-08-25"
+---
+  
+#Load packages
+```{r load_packages, message=FALSE, warning=FALSE, echo=FALSE, include=FALSE}
+library(tidyverse)
+library(ggtree)
+```
+
+#Load data
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+#load metadata
+seqid_metadata <- read.csv("data/tax_SILVA.txt", sep="\t", header = FALSE)
+tax_metadata <- read.csv("data/tax_complete.csv", sep=",", header = FALSE)
+tax_metadata$V1 <- gsub("FLASV", "ESV", tax_metadata$V1)
+
+#load tree
+tree <- read.tree(file = "data/MiDAS_48_for_article2.tree")
+```
+
+#Create metadata for SeqID tree
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+New_phylum <- (seqid_metadata %>%
+  filter(V3<75) %>%
+  select(V1))$V1
+
+New_class <- (seqid_metadata %>%
+  filter(V3<78.5 & V3 >= 75) %>%
+  select(V1))$V1
+
+New_order <- (seqid_metadata %>%
+  filter(V3<82 & V3 >= 78.5) %>%
+  select(V1))$V1
+
+New_family <- (seqid_metadata %>%
+  filter(V3<86.5 & V3 >= 82) %>%
+  select(V1))$V1
+
+New_genus <- (seqid_metadata %>%
+  filter(V3<94.5 & V3 >= 86.5) %>%
+  select(V1))$V1
+
+New_species <- (seqid_metadata %>%
+  filter(V3<98.7 & V3 >= 94.5) %>%
+  select(V1))$V1
+
+Known <- (seqid_metadata %>%
+  filter(V3 >= 98.7) %>%
+  select(V1))$V1
+
+groupInfo <- list(New_phylum = New_phylum, New_class = New_class, New_order = New_order,
+                  New_family = New_family, New_genus = New_genus, New_species = New_species,
+                  Known = Known)
+```
+
+#Create metadata for TaxNovelty tree
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+New_phylum2 <- (tax_metadata %>%
+  filter(grepl("midas",V3)) %>%
+  select(V1))$V1
+
+New_class2 <- (tax_metadata %>%
+  filter(grepl("midas",V4) & !(grepl("midas",V3))) %>%
+  select(V1))$V1
+
+New_order2 <- (tax_metadata %>%
+  filter(grepl("midas",V5) & !(grepl("midas",V4))) %>%
+  select(V1))$V1
+
+New_family2 <- (tax_metadata %>%
+  filter(grepl("midas",V6) & !(grepl("midas",V5))) %>%
+  select(V1))$V1
+
+New_genus2 <- (tax_metadata %>%
+  filter(grepl("midas",V7) & !(grepl("midas",V6))) %>%
+  select(V1))$V1
+
+New_species2 <- (tax_metadata %>%
+  filter(grepl("midas",V8) & !(grepl("midas",V7))) %>%
+  select(V1))$V1
+
+Known_species2 <- (tax_metadata %>%
+  filter(!(grepl("midas",V8))) %>%
+  select(V1))$V1
+
+groupInfo2 <- list(New_phylum = New_phylum2, New_class = New_class2, New_order = New_order2,
+                  New_family = New_family2, New_genus = New_genus2, New_species = New_species2,
+                  Known_species = Known_species2)
+```
+
+#Create metadata for Taxonomy tree
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+Proteobacteria <- (tax_metadata %>%
+  filter(grepl("Proteobacteria",V3)) %>%
+  select(V1))$V1
+
+Bacteroidota  <- (tax_metadata %>%
+  filter(grepl("Bacteroidota",V3)) %>%
+  select(V1))$V1
+
+Firmicutes <- (tax_metadata %>%
+  filter(grepl("Firmicutes",V3)) %>%
+  select(V1))$V1
+
+Chloroflexi <- (tax_metadata %>%
+  filter(grepl("Chloroflexi",V3)) %>%
+  select(V1))$V1
+
+Patescibacteria  <- (tax_metadata %>%
+  filter(grepl("Patescibacteria",V3)) %>%
+  select(V1))$V1
+
+Actinobacteriota <- (tax_metadata %>%
+  filter(grepl("Actinobacteriota",V3)) %>%
+  select(V1))$V1
+
+Planctomycetota <- (tax_metadata %>%
+  filter(grepl("Planctomycetota",V3)) %>%
+  select(V1))$V1
+
+Planctomycetota <- (tax_metadata %>%
+  filter(grepl("Planctomycetota",V3)) %>%
+  select(V1))$V1
+
+Myxococcota <- (tax_metadata %>%
+  filter(grepl("Myxococcota",V3)) %>%
+  select(V1))$V1
+
+groupInfo3 <- list(Proteobacteriam = Proteobacteria, Bacteroidota = Bacteroidota, Firmicutes = Firmicutes,
+                  Chloroflexi = Chloroflexi, Patescibacteria = Patescibacteria, Actinobacteriota = Actinobacteriota,
+                  Planctomycetota = Planctomycetota, Myxococcota = Myxococcota)
+```
+
+#Create trees
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+tree1 <- groupOTU(tree, groupInfo)
+p <- ggtree(tree1, aes(color=group), layout='circular')
+ggsave(filename="output/Figure2_Tree_SeqID.pdf", plot=p, width=7, height=10, useDingbats=FALSE, limitsize=FALSE)
+
+tree2 <- groupOTU(tree, groupInfo2)
+p <- ggtree(tree2, aes(color=group), layout='circular')
+ggsave(filename="output/Figure2_Tree_TaxNovelty.pdf", plot=p, width=7, height=10, useDingbats=FALSE, limitsize=FALSE)
+
+tree3 <- groupOTU(tree, groupInfo3)
+p <- ggtree(tree3, aes(color=group), layout='circular')
+ggsave(filename="output/Figure2_Tree_Taxonomy.pdf", plot=p, width=7, height=10, useDingbats=FALSE, limitsize=FALSE)
+```
+
+

@@ -1,0 +1,291 @@
+---
+title: "Figure 8, 9, S8-S14: Heatmaps"
+author: "Marta Nierychlo and Morten Simonsen Dueholm"
+date: "2021-08-25"
+---
+
+#Load packages
+```{r load_packages, message=FALSE, warning=FALSE, echo=FALSE, include=FALSE}
+library(ampvis2)
+library(data.table)
+library(patchwork)
+library(forcats)
+```
+
+#Load data
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+#load metadata
+seq_metadata <- read.csv("data/2020-07-03_Sequencing_metadata.txt", sep="\t")
+wwtp_m <- read.csv("data/DataS1_210413.txt", sep="\t")
+wwtp_m$ContinentCountry <- paste(wwtp_m$Continent,wwtp_m$Country,sep=";") 
+
+#V13
+seq_V13 <- seq_metadata[ , which(names(seq_metadata) %in% c("V13_seq_id","WWTP_id"))]
+
+V13metadata <- merge.data.frame(seq_V13, wwtp_m, by ="WWTP_id", all.x = TRUE)
+V13metadata$WWTP_ID <- V13metadata$WWTP_id
+V13metadata <- V13metadata[,-1]
+
+d13 <- amp_load(otutab = "data/V13_ASVtab.txt", 
+                taxonomy = "data/V13ASV_vs_MiDAS_4.8.sintax",
+                metadata = V13metadata)
+
+d13n <- amp_subset_samples(d13, minreads = 10000, normalise = TRUE)
+
+#Subset AS only in 4 basic process_type(s)
+d13nAS <- amp_subset_samples(d13n, Plant_type == "Activated sludge")
+d13nAS4PT <-  amp_subset_samples(d13nAS, Process_type %in% c("C", "C,N", "C,N,DN", "C,N,DN,P")) 
+
+rm(d13,d13n,d13nAS,seq_metadata,seq_V13,V13metadata)
+```
+
+### Functional groups and filaments
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+# Select WWTPs with nitrification, denitrification, EBPR
+d13nAS4PT_N <- amp_subset_samples(d13nAS4PT, Process_type %in% c("C,N", "C,N,DN", "C,N,DN,P"), normalise = TRUE)
+d13nAS4PT_DN <- amp_subset_samples(d13nAS4PT, Process_type %in% c("C,N,DN", "C,N,DN,P"), normalise = TRUE)
+d13nAS4PT_P <- amp_subset_samples(d13nAS4PT, Process_type %in% c("C,N,DN,P"), normalise = TRUE)
+
+# Define functional groups
+Nitrifiers = c("g__Nitrosomonas","g__Nitrosospira","g__Nitrospira","g__Nitrotoga")
+Denitrifiers = c("g__Zoogloea", "g__Rhodoferax", "g__Thauera", "g__Rhodobacter", 
+                 "g__Sulfuritalea", "g__Paracoccus", "g__Azoarcus")
+PAOs <- c("g__Tetrasphaera","g__Dechloromonas","g__Ca_Accumulibacter")
+GAOs <- c("g__Ca_Competibacter","g__Defluviicoccus","g__Propionivibrio","g__Micropruina")
+Filaments <- c("g__Ca_Microthrix", "g__Leptothrix","g__Sphaerotilus","g__Ca_Villigracilis","g__Trichococcus",
+               "g__Thiothrix","g__Ca_Promineofilum","Haliscomenobacter","s__Defluviicoccus_seviorii",
+               "g__Gordonia","g__Sarcinithrix","g__Ca_Amarolinea","g__Kouleothrix","g__Ca_Alysiosphaera",
+               "g__Nocardioides","g__midas_g_1668","g__Anaerolinea","s__Tetrashaera_midas_s_328",
+               "g__midas_g_105","g__midas_g_2111","g__midas_g_344",
+               "g__Skermania","g__Ca_Nostocoida","g__Neomegalonema","g__Beggiatoa")
+
+# Create Function to create heatmaps for specific genera
+GenusDataPrep <- function(Function,Database) {
+  df <- amp_subset_taxa(Database, tax_vector = Function, normalise = FALSE)
+  
+  df2 <- amp_heatmap(df,
+            group_by = "ContinentCountry",
+            tax_aggregate = "Genus",
+            measure = "mean",
+            tax_show = 100,
+            showRemainingTaxa = TRUE,
+            tax_empty ="remove",
+            normalise = FALSE,
+            textmap = TRUE)
+  
+  df3 <- df2 %>%
+  mutate(Genus = rownames(df2)) %>%
+  gather(1:length(unique(df$metadata$ContinentCountry)), key="ContinentCountry", value="RA") %>%
+  mutate(Genus = fct_reorder(Genus, RA, mean)) %>%
+  mutate(Genus = fct_relevel(Genus, grep("Remaining taxa", Genus, value = TRUE)[1]))
+  df3
+  }
+
+df1 <- GenusDataPrep(Nitrifiers, d13nAS4PT_N)
+df2 <- GenusDataPrep(Denitrifiers, d13nAS4PT_DN)
+df3 <- GenusDataPrep(PAOs, d13nAS4PT_P)
+df4 <- GenusDataPrep(GAOs, d13nAS4PT_P)
+
+all_countries <- data.frame(unique(c(df1$ContinentCountry,df2$ContinentCountry,df3$ContinentCountry,df4$ContinentCountry))) %>%
+  rename(ContinentCountry="unique.c.df1.ContinentCountry..df2.ContinentCountry..df3.ContinentCountry..")
+
+# Add countries without any of a specific plant type
+df1 <- merge.data.frame(df1,all_countries,all = TRUE)
+df2 <- merge.data.frame(df2,all_countries,all = TRUE)
+df3 <- merge.data.frame(df3,all_countries,all = TRUE)
+df4 <- merge.data.frame(df4,all_countries,all = TRUE)
+
+
+Heatmap <- function(df) {
+  p <- ggplot(df, aes(ContinentCountry, Genus)) +
+    geom_tile(aes(fill = RA)) + 
+    geom_text(aes(label = round(RA, 1))) +
+  theme_bw() +
+  theme(axis.title.y = element_blank()) +
+  theme(axis.title.x = element_blank()) +
+  theme(axis.text.x = element_text(angle = 90, vjust=1, hjust=1)) +
+  scale_fill_binned(breaks = c(0.01, 0.1, 1),
+                      limits = c(0, 10),
+                      guide = guide_coloursteps(),
+                      trans = "sqrt")
+p}
+
+p1a <- Heatmap(df1) + theme(axis.text.x = element_blank(), legend.position = "none")
+p1b <- Heatmap(df2) + theme(axis.text.x = element_blank(), legend.position = "none")
+p1c <- Heatmap(df3) + theme(axis.text.x = element_blank(), legend.position = "none")
+p1d <- Heatmap(df4)
+
+p1 <- p1a + p1b + p1c + p1d + plot_layout(ncol=1,heights=c(10,16,7.5,10))
+
+ggsave(filename="output/Figure6_Functional_groups_heatmap.pdf", plot=p1, width=10, height=6, useDingbats=FALSE, limitsize=FALSE)
+
+### Filaments
+df5 <- GenusDataPrep(Filaments, d13nAS4PT)
+p2 <- Heatmap(df5)
+
+ggsave(filename="output/Figure9_Filaments.pdf", plot=p2, width=14, height=6, useDingbats=FALSE, limitsize=FALSE)
+
+### Filaments in separate process types
+d13nAS4PT_C <- amp_subset_samples(d13nAS4PT, Process_type %in% c("C"), normalise = TRUE)
+d13nAS4PT_CN <- amp_subset_samples(d13nAS4PT, Process_type %in% c("C,N"), normalise = TRUE)
+d13nAS4PT_CNDN <- amp_subset_samples(d13nAS4PT, Process_type %in% c("C,N,DN"), normalise = TRUE)
+d13nAS4PT_CNDNP <- amp_subset_samples(d13nAS4PT, Process_type %in% c("C,N,DN,P"), normalise = TRUE)
+
+df6 <- GenusDataPrep(Filaments, d13nAS4PT_C)
+df7 <- GenusDataPrep(Filaments, d13nAS4PT_CN)
+df8 <- GenusDataPrep(Filaments, d13nAS4PT_CNDN)
+df9 <- GenusDataPrep(Filaments, d13nAS4PT_CNDNP)
+
+all_countries <- data.frame(unique(c(df6$ContinentCountry,df7$ContinentCountry,df8$ContinentCountry,df9$ContinentCountry))) %>%
+  rename(ContinentCountry="unique.c.df6.ContinentCountry..df7.ContinentCountry..df8.ContinentCountry..")
+
+# Add countries without any of a specific plant type
+df6 <- merge.data.frame(df6,all_countries,all = TRUE)
+df7 <- merge.data.frame(df7,all_countries,all = TRUE)
+df8 <- merge.data.frame(df8,all_countries,all = TRUE)
+df9 <- merge.data.frame(df9,all_countries,all = TRUE)
+
+p3a <- Heatmap(df6) + theme(axis.text.x = element_blank(), legend.position = "none")
+p3b <- Heatmap(df7) + theme(axis.text.x = element_blank(), legend.position = "none")
+p3c <- Heatmap(df8) + theme(axis.text.x = element_blank(), legend.position = "none")
+p3d <- Heatmap(df9)
+
+p3 <- p3a + p3b + p3c + p3d + plot_layout(ncol=1,heights=c(10,10,10,10))
+
+ggsave(filename="output/FigureS12_210824.pdf", plot=p3, width=12, height=17, useDingbats=FALSE, limitsize=FALSE)
+
+
+### Species-level diversity
+### Nitrifiers species level
+# Select WWTPs with nitrification
+d13nAS4PT_N <- amp_subset_samples(d13nAS4PT, Process_type %in% c("C,N", "C,N,DN", "C,N,DN,P"), normalise = TRUE)
+
+# Create Function to create heatmaps for specific species
+SpeciesDataPrep <- function(Genus,Database) {
+  df <- amp_subset_taxa(Database, tax_vector = Genus, normalise = FALSE)
+  df$tax$Species <- if_else(df$tax$Species =="","s__Unclassified",df$tax$Species)
+  
+  df2 <- amp_heatmap(df,
+            group_by = "ContinentCountry",
+            tax_aggregate = "Species",
+            measure = "mean",
+            tax_show = 10,
+            showRemainingTaxa = TRUE,
+            tax_empty ="OTU",
+            normalise = FALSE,
+            textmap = TRUE)
+  
+  df3 <- df2 %>%
+  mutate(Species = rownames(df2)) %>%
+  gather(1:length(unique(df$metadata$ContinentCountry)), key="ContinentCountry", value="RA") %>%
+  mutate(Species = fct_reorder(Species, RA, mean)) %>%
+  mutate(Species = fct_relevel(Species, grep("Remaining taxa", Species, value = TRUE)[1])) %>%  
+  mutate(Species = fct_relevel(Species, "Unclassified"))  
+  
+  df3
+  }
+
+Heatmap2 <- function(df) {
+  p <- ggplot(df, aes(ContinentCountry, Species)) +
+    geom_tile(aes(fill = RA)) + 
+    geom_text(aes(label = round(RA, 2))) +
+  theme_bw() +
+  theme(axis.title.y = element_blank()) +
+  theme(axis.title.x = element_blank()) +
+  theme(axis.text.x = element_text(angle = 90, vjust=1, hjust=1)) +
+  scale_fill_binned(breaks = c(0.01, 0.1, 1),
+                      limits = c(0, 10),
+                      guide = guide_coloursteps(),
+                      trans = "sqrt")
+p}
+
+df10 <- SpeciesDataPrep("g__Nitrosomonas",d13nAS4PT_N)
+df11 <- SpeciesDataPrep("g__Nitrosospira",d13nAS4PT_N)
+df12 <- SpeciesDataPrep("g__Nitrospira",d13nAS4PT_N)
+df13 <- SpeciesDataPrep("g__Nitrotoga",d13nAS4PT_N)
+
+p4a <- Heatmap2(df10) + theme(axis.text.x = element_blank(), legend.position = "none")
+p4b <- Heatmap2(df11) + theme(axis.text.x = element_blank(), legend.position = "none")
+p4c <- Heatmap2(df12) + theme(axis.text.x = element_blank(), legend.position = "none")
+p4d <- Heatmap2(df13)
+
+p4 <- p4a + p4b + p4c + p4d + plot_layout(ncol=1,heights=c(10,5,10,4))
+
+ggsave(filename="output/FigureS8_nitrification.pdf", plot=p4, width=14, height=8, useDingbats=FALSE, limitsize=FALSE)
+
+### Denitrifiers species level
+# Select WWTPs with nitrification
+d13nAS4PT_DN <- amp_subset_samples(d13nAS4PT, Process_type %in% c("C,N,DN", "C,N,DN,P"), normalise = TRUE)
+
+df14 <- SpeciesDataPrep("g__Rhodoferax",d13nAS4PT_DN)
+df15 <- SpeciesDataPrep("g__Zoogloea",d13nAS4PT_DN)
+df16 <- SpeciesDataPrep("g__Rhodobacter",d13nAS4PT_DN)
+df17 <- SpeciesDataPrep("g__Thauera",d13nAS4PT_DN)
+
+p5a <- Heatmap2(df14) + theme(axis.text.x = element_blank(), legend.position = "none")
+p5b <- Heatmap2(df15) + theme(axis.text.x = element_blank(), legend.position = "none")
+p5c <- Heatmap2(df16) + theme(axis.text.x = element_blank(), legend.position = "none")
+p5d <- Heatmap2(df17)
+
+p5 <- p5a + p5b + p5c + p5d + plot_layout(ncol=1,heights=c(10,10,10,10))
+
+ggsave(filename="output/FigureS9_denitrification.pdf", plot=p5, width=14, height=12, useDingbats=FALSE, limitsize=FALSE)
+
+### PAOs species level
+# Select WWTPs with EBPR
+d13nAS4PT_P <- amp_subset_samples(d13nAS4PT, Process_type %in% c("C,N,DN,P"), normalise = TRUE)
+
+df18 <- SpeciesDataPrep("g__Tetrasphaera",d13nAS4PT_P)
+df19 <- SpeciesDataPrep("g__Dechloromonas",d13nAS4PT_P)
+df20 <- SpeciesDataPrep("g__Ca_Accumulibacter",d13nAS4PT_P)
+
+p6a <- Heatmap2(df18) + theme(axis.text.x = element_blank(), legend.position = "none")
+p6b <- Heatmap2(df19) + theme(axis.text.x = element_blank(), legend.position = "none")
+p6c <- Heatmap2(df20)
+
+p6 <- p6a + p6b + p6c + plot_layout(ncol=1,heights=c(10,10,10))
+
+ggsave(filename="output/FigureS10_PAOs.pdf", plot=p6, width=11, height=9, useDingbats=FALSE, limitsize=FALSE)
+
+### GAOs species level
+df21 <- SpeciesDataPrep("g__Ca_Competibacter",d13nAS4PT_P)
+df22 <- SpeciesDataPrep("g__Defluviicoccus",d13nAS4PT_P)
+df23 <- SpeciesDataPrep("g__Propionivibrio",d13nAS4PT_P)
+df24 <- SpeciesDataPrep("g__Micropruina",d13nAS4PT_P)
+
+
+p7a <- Heatmap2(df21) + theme(axis.text.x = element_blank(), legend.position = "none")
+p7b <- Heatmap2(df22) + theme(axis.text.x = element_blank(), legend.position = "none")
+p7c <- Heatmap2(df23) + theme(axis.text.x = element_blank(), legend.position = "none")
+p7d <- Heatmap2(df24)
+
+p7 <- p7a + p7b + p7c + p7d + plot_layout(ncol=1,heights=c(10,10,10,7))
+
+ggsave(filename="output/FigureS11_GAOs.pdf", plot=p7, width=11, height=11, useDingbats=FALSE, limitsize=FALSE)
+
+### Filaments species level
+df25 <- SpeciesDataPrep("g__Ca_Microthrix",d13nAS4PT)
+df26 <- SpeciesDataPrep("g__Leptothrix",d13nAS4PT)
+df27 <- SpeciesDataPrep("g__Ca_Villigracilis",d13nAS4PT)
+df28 <- SpeciesDataPrep("g__Trichococcus",d13nAS4PT)
+df29 <- SpeciesDataPrep("g__Sphaerotilus",d13nAS4PT)
+df30 <- SpeciesDataPrep("g__Ca_Promineofilum",d13nAS4PT)
+df31 <- SpeciesDataPrep("g__Thiothrix",d13nAS4PT)
+df32 <- SpeciesDataPrep("g__Gordonia",d13nAS4PT)
+
+p8a <- Heatmap2(df25) + theme(axis.text.x = element_blank(), legend.position = "none")
+p8b <- Heatmap2(df26) + theme(axis.text.x = element_blank(), legend.position = "none")
+p8c <- Heatmap2(df27) + theme(axis.text.x = element_blank(), legend.position = "none")
+p8d <- Heatmap2(df28)
+p8 <- p8a + p8b + p8c + p8d + plot_layout(ncol=1,heights=c(6,12,12,1))
+
+ggsave(filename="output/FigureS13_filaments1.pdf", plot=p8, width=14, height=10, useDingbats=FALSE, limitsize=FALSE)
+
+p9a <- Heatmap2(df29) + theme(axis.text.x = element_blank(), legend.position = "none")
+p9b <- Heatmap2(df30) + theme(axis.text.x = element_blank(), legend.position = "none")
+p9c <- Heatmap2(df31) + theme(axis.text.x = element_blank(), legend.position = "none")
+p9d <- Heatmap2(df32)
+p9 <- p9a + p9b + p9c + p9d + plot_layout(ncol=1,heights=c(10,10,10,10))
+
+ggsave(filename="output/FigureS14_filaments2.pdf", plot=p9, width=14, height=12, useDingbats=FALSE, limitsize=FALSE)
+```

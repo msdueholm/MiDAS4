@@ -1,0 +1,304 @@
+---
+title: "Figure S2: MiDAS4 evaluation based on V13 data"
+author: "Morten Simonsen Dueholm"
+date: "2021-08-25"
+---
+
+## R-packages
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+library(data.table)
+library(tidyverse)
+library(patchwork)
+```
+
+## Create coverage graphs
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+# Read mapping results
+read_amp_mappings <- function(input) {
+  map <- data.table::fread(input,
+                      sep = "\t",
+                      header = FALSE,
+                      quote = "\"",
+                      fill = TRUE,
+                      check.names = FALSE,
+                      stringsAsFactors = FALSE,
+                      select = c(1,3))
+  map <- setnames(map, "V1", "ASV")
+  map <- setnames(map, "V3", gsub(".*vs_(.+).b6", "\\1", paste(input)))
+  map <- map[order(, readr::parse_number(ASV))]}
+
+a <- read_amp_mappings("data/V13ASV_vs_MiDAS_2.1.3.b6")
+b <- read_amp_mappings("data/V13ASV_vs_MiDAS_3.7.b6")
+c <- read_amp_mappings("data/V13ASV_vs_MiDAS_4.8.b6")
+d <- read_amp_mappings("data/V13ASV_vs_GreenGenes_16S_13.5.b6")
+e <- read_amp_mappings("data/V13ASV_vs_RDP_16S_v16.b6")
+f <- read_amp_mappings("data/V13ASV_vs_SILVA_138_SSURef_NR99.b6")
+g <- read_amp_mappings("data/V13ASV_vs_GTDB_SSU_r89.b6")
+
+# Merge all the mappings into a single data.table, sort it by ASV number, and remove NA's.
+merged_map <- merge.data.table(a, b, by="ASV", all=TRUE)
+merged_map <- merge.data.table(merged_map, c, by="ASV", all=TRUE)
+merged_map <- merge.data.table(merged_map, d, by="ASV", all=TRUE)
+merged_map <- merge.data.table(merged_map, e, by="ASV", all=TRUE)
+merged_map <- merge.data.table(merged_map, f, by="ASV", all=TRUE)
+merged_map <- merge.data.table(merged_map, g, by="ASV", all=TRUE)
+merged_map <- merged_map[order(, readr::parse_number(ASV))]
+merged_map[is.na(merged_map)] <- 0
+
+# Read ASV table
+ASVtable <- data.table::fread("data/V13ASV.tab",
+                      sep = "\t",
+                      header = TRUE,
+                      quote = "\"",
+                      fill = TRUE,
+                      check.names = FALSE,
+                      stringsAsFactors = FALSE)
+ASVtable <- setnames(ASVtable, 1, "ASV")
+ASVtable <- ASVtable[order(, readr::parse_number(ASV))]
+
+# Merge ASV table and mappings
+df <- merge.data.table(ASVtable, merged_map, by="ASV")
+df <- df[SILVA_138_SSURef_NR99>60] # Remove unspecific amplicons 
+
+# Rearrange data.table into long format with Database and SeqID as variables
+df_long <- melt.data.table(df, id.vars = 1:1280, measure.vars = 1281:1287, variable.name = "Database", value.name = "Identity") 
+df_long <- melt.data.table(df_long, id.vars = c("ASV","Database","Identity"), measure.vars = 2:1280, variable.name = "SeqID", value.name = "Counts") 
+df_long <- df_long[, Rel_abun := Counts/sum(Counts)*100, by=.(SeqID,Database)]
+
+# Calculate with coverage of ASVs after subsetting based on relative abundance.
+coverage_01 <-df_long[Rel_abun >= 0.1, .("coverage"=sum(Rel_abun)), by=.(SeqID,Database)][,.(mean=mean(coverage),sd=sd(coverage),n=.N), by=Database]
+
+coverage_001 <-df_long[Rel_abun >= 0.01, .("coverage"=sum(Rel_abun)), by=.(SeqID,Database)][,.(mean=mean(coverage),sd=sd(coverage),n=.N), by=Database]
+
+coverage_0001 <-df_long[Rel_abun >= 0.001, .("coverage"=sum(Rel_abun)), by=.(SeqID,Database)][,.(mean=mean(coverage),sd=sd(coverage),n=.N), by=Database]
+
+#Calculate fraction of ASVs with 99% matches in the reference databases
+r01 <- df_long[Rel_abun>0.1 & Counts>0, .("Hits"=sum(Identity>=99)/.N*100,
+            "detected_amplicons"=.N,
+            "Cutoff"="01",
+            "Relative_abundance"=paste("Relative abundance > 0.1%\n Coverage: ",round(coverage_01$mean[1],digits=2),"% ? ",round(coverage_01$sd[1], digits = 2),"%, n=", coverage_01$n[1],sep="")), by=.(Database,SeqID)]
+
+r001 <- df_long[Rel_abun>0.01 & Counts>0, .("Hits"=sum(Identity>=99)/.N*100,
+            "detected_amplicons"=.N,
+            "Cutoff"="001",
+            "Relative_abundance"=paste("Relative abundance > 0.01%\n Coverage: ",round(coverage_001$mean[1],digits = 2),"% ? ",round(coverage_001$sd[1], digits = 2),"%, n=", coverage_001$n[1],sep="")), by=.(Database,SeqID)]
+
+r0001 <- df_long[Rel_abun>0.001 & Counts>0, .("Hits"=sum(Identity>=99)/.N*100,
+            "detected_amplicons"=.N,
+            "Cutoff"="0001",
+            "Relative_abundance"=paste("Relative abundance > 0.001%\n Coverage: ",round(coverage_0001$mean[1],digits = 2),"% ? ",round(coverage_0001$sd[1],digits = 2),"%, n=", coverage_0001$n[1],sep="")), by=.(Database,SeqID)]
+
+r <- rbindlist(list(r01,r001,r0001))
+
+# Rearrange and format data
+r <- r[, Database:=factor(Database, levels=c("GreenGenes_16S_13.5","GTDB_SSU_r89",
+                                             "RDP_16S_v16","SILVA_138_SSURef_NR99",
+                                             "MiDAS_2.1.3","MiDAS_3.7","MiDAS_4.8"))]
+
+r <- r[, Relative_abundance:=factor(Relative_abundance, levels=c(r01$Relative_abundance[1],r001$Relative_abundance[1],r0001$Relative_abundance[1]))]
+                                                       
+r <- setkey(r, Hits)
+
+#Calculate fraction of ASVs with 99% matches in the reference databases
+Summary1 <- r[, .("Mean"=mean(Hits),
+                  "Sd"=sd(Hits)), 
+              by=.(Database,Cutoff)]
+
+write.csv2(Summary1, file="output/Hits_summary_V13.txt", row.names=FALSE, quote=FALSE)
+
+## Plot histogram
+p1 <- ggplot(data=r, aes(x=Database, y=Hits, fill=Database)) +
+  theme_bw() +
+  geom_violin(scale = "width") +
+  geom_boxplot(width=0.1, fill="white", outlier.shape = NA)+
+  ylab("Percent of ASVs with high-identity references (>99% ID)") +
+  scale_fill_brewer(palette="RdYlBu")+
+  theme(axis.title.x=element_blank()) +
+  scale_y_continuous(limits = c(0, 100), breaks=seq(0,100,10)) +
+  theme(legend.position = "none") +
+  facet_grid(~Relative_abundance) +
+  theme(axis.text.x = element_text(angle = 90, vjust=0.5, hjust = 1))
+
+rm(df, df_long, a,b,c,d,e,f,g,merged_map,r,r0001,r001,r01)
+```
+
+## Create classification graphs for genera
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+# Function for importing and arranging classifications
+read_amp_classifications <- function(input) {
+  map <- data.table::fread(input,
+                      sep = "\t",
+                      header = FALSE,
+                      quote = "\"",
+                      fill = TRUE,
+                      check.names = FALSE,
+                      stringsAsFactors = FALSE,
+                      select = c(1,4))
+  map <- setnames(map, "V1", "ASV")
+  map <- map[, Database:=gsub(".*vs_(.+).sintax", "\\1", paste(input))]
+  map <- map[order(, readr::parse_number(ASV))]}
+
+
+# Read classifications 
+a2 <- read_amp_classifications("data/V13ASV_vs_MiDAS_2.1.3.sintax")
+b2 <- read_amp_classifications("data/V13ASV_vs_MiDAS_3.7.sintax")
+c2 <- read_amp_classifications("data/V13ASV_vs_MiDAS_4.8.sintax")
+d2 <- read_amp_classifications("data/V13ASV_vs_GreenGenes_16S_13.5.sintax")
+e2 <- read_amp_classifications("data/V13ASV_vs_RDP_16S_v16.sintax")
+f2 <- read_amp_classifications("data/V13ASV_vs_SILVA_138_SSURef_NR99.sintax")
+g2 <- read_amp_classifications("data/V13ASV_vs_GTDB_SSU_r89.sintax")
+
+merged_map2 <- rbind.data.frame(a2,b2,c2,d2,e2,f2,g2)
+merged_map2 <- merged_map2[,c("K","P","C","O","F","G","S") := tstrsplit(V4, ",", fixed=TRUE)]
+
+
+merged_map2 <- merged_map2[,V4:=NULL]
+merged_map2 <- merged_map2[,K:=NULL]
+merged_map2 <- merged_map2[,P:=NULL]
+merged_map2 <- merged_map2[,C:=NULL]
+merged_map2 <- merged_map2[,O:=NULL]
+merged_map2 <- merged_map2[,F:=NULL]
+merged_map2 <- merged_map2[,S:=NULL]
+
+# Merge ASV table and mappings
+df2 <- merge.data.table(ASVtable, merged_map2, by="ASV")
+
+# Rearrange data.table into long format with Database and SeqID as variables
+df_long2 <- melt.data.table(df2, id.vars = c(1,1281:1282), measure.vars = 2:1280, variable.name = "SeqID", value.name = "Counts") 
+
+df_long2 <- df_long2[, Rel_abun := Counts/sum(Counts)*100, by=.(SeqID,Database)]
+
+#Summarize data
+#Calculate fraction of ASVs with 99% matches in the reference databases
+r01c <- df_long2[Rel_abun>0.1 & Counts>0, .("Classified"=(.N-sum(is.na(G)))/.N*100,
+            "detected_amplicons"=.N,
+            "Cutoff"="01",
+            "Relative_abundance"=paste("Relative abundance > 0.1%\n Coverage: ",round(coverage_01$mean[1],digits=2),"% ? ",round(coverage_01$sd[1], digits = 2),"%, n=", coverage_01$n[1],sep="")), by=.(Database,SeqID)]
+
+r001c <- df_long2[Rel_abun>0.01 & Counts>0, .("Classified"=(.N-sum(is.na(G)))/.N*100,
+            "detected_amplicons"=.N,
+            "Cutoff"="001",
+            "Relative_abundance"=paste("Relative abundance > 0.01%\n Coverage: ",round(coverage_001$mean[1],digits = 2),"% ? ",round(coverage_001$sd[1], digits = 2),"%, n=", coverage_001$n[1],sep="")), by=.(Database,SeqID)]
+
+r0001c <- df_long2[Rel_abun>0.001 & Counts>0, .("Classified"=(.N-sum(is.na(G)))/.N*100,
+            "detected_amplicons"=.N,
+            "Cutoff"="0001",
+            "Relative_abundance"=paste("Relative abundance > 0.001%\n Coverage: ",round(coverage_0001$mean[1],digits = 2),"% ? ",round(coverage_0001$sd[1],digits = 2),"%, n=", coverage_0001$n[1],sep="")), by=.(Database,SeqID)]
+
+rc <- rbindlist(list(r01c,r001c,r0001c))
+
+# Rearrange and format data
+rc <- rc[, Database:=factor(Database, levels=c("GreenGenes_16S_13.5","GTDB_SSU_r89",
+                                             "RDP_16S_v16","SILVA_138_SSURef_NR99",
+                                             "MiDAS_2.1.3","MiDAS_3.7","MiDAS_4.8"))]
+
+rc <- rc[, Relative_abundance:=factor(Relative_abundance, levels=c(r01c$Relative_abundance[1],r001c$Relative_abundance[1],r0001c$Relative_abundance[1]))]
+                                                       
+rc <- setkey(rc, Classified)
+
+#Calculate fraction of ASVs with genus level classification in the reference databases
+Summary2 <- rc[,.("Mean"=mean(Classified),
+            "Stdev"=sd(Classified)),
+            by=.(Database,Cutoff)]
+
+write.csv2(Summary2, file="output/Genus_classification_summary_V13.txt", row.names=FALSE, quote=FALSE)
+
+## Plot histogram
+p2 <- ggplot(data=rc, aes(x=Database, y=Classified, fill=Database)) +
+  theme_bw() +
+  geom_violin(scale = "width") +
+  geom_boxplot(width=0.1, fill="white", outlier.shape = NA)+
+  ylab("Percent of ASVs classified at the genus-level") +
+  scale_fill_brewer(palette="RdYlBu")+
+  theme(axis.title.x=element_blank()) +
+  scale_y_continuous(limits = c(0, 100), breaks=seq(0,100,10)) +
+  theme(legend.position = "none") +
+  facet_grid(~Relative_abundance) +
+  theme(axis.text.x = element_text(angle = 90, vjust=0.5, hjust = 1))
+
+rm(df2, df_long2,merged_map2,rc,r0001c,r001c,r01c)
+```
+
+## Create classification graphs for species
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+#Summarize data
+merged_map3 <- rbind.data.frame(a2,b2,c2,d2,e2,f2,g2)
+merged_map3 <- merged_map3[,c("K","P","C","O","F","G","S") := tstrsplit(V4, ",", fixed=TRUE)]
+
+
+merged_map3 <- merged_map3[,V4:=NULL]
+merged_map3 <- merged_map3[,K:=NULL]
+merged_map3 <- merged_map3[,P:=NULL]
+merged_map3 <- merged_map3[,C:=NULL]
+merged_map3 <- merged_map3[,O:=NULL]
+merged_map3 <- merged_map3[,F:=NULL]
+merged_map3 <- merged_map3[,G:=NULL]
+
+# Merge ASV table and mappings
+df3 <- merge.data.table(ASVtable, merged_map3, by="ASV")
+
+# Rearrange data.table into long format with Database and SeqID as variables
+df_long3 <- melt.data.table(df3, id.vars = c(1,1281:1282), measure.vars = 2:1280, variable.name = "SeqID", value.name = "Counts") 
+
+df_long3 <- df_long3[, Rel_abun := Counts/sum(Counts)*100, by=.(SeqID,Database)]
+
+
+#Calculate fraction of ASVs with 99% matches in the reference databases
+r01c2 <- df_long3[Rel_abun>0.1 & Counts>0, .("Classified"=(.N-sum(is.na(S)))/.N*100,
+            "detected_amplicons"=.N,
+            "Cutoff"="01",
+            "Relative_abundance"=paste("Relative abundance > 0.1%\n Coverage: ",round(coverage_01$mean[1],digits=2),"% ? ",round(coverage_01$sd[1], digits = 2),"%, n=", coverage_01$n[1],sep="")), by=.(Database,SeqID)]
+
+r001c2 <- df_long3[Rel_abun>0.01 & Counts>0, .("Classified"=(.N-sum(is.na(S)))/.N*100,
+            "detected_amplicons"=.N,
+            "Cutoff"="001",
+            "Relative_abundance"=paste("Relative abundance > 0.01%\n Coverage: ",round(coverage_001$mean[1],digits = 2),"% ? ",round(coverage_001$sd[1], digits = 2),"%, n=", coverage_001$n[1],sep="")), by=.(Database,SeqID)]
+
+r0001c2 <- df_long3[Rel_abun>0.001 & Counts>0, .("Classified"=(.N-sum(is.na(S)))/.N*100,
+            "detected_amplicons"=.N,
+            "Cutoff"="0001",
+            "Relative_abundance"=paste("Relative abundance > 0.001%\n Coverage: ",round(coverage_0001$mean[1],digits = 2),"% ? ",round(coverage_0001$sd[1],digits = 2),"%, n=", coverage_0001$n[1],sep="")), by=.(Database,SeqID)]
+
+rc2 <- rbindlist(list(r01c2,r001c2,r0001c2))
+
+# Rearrange and format data
+rc2 <- rc2[, Database:=factor(Database, levels=c("GreenGenes_16S_13.5","GTDB_SSU_r89",
+                                             "RDP_16S_v16","SILVA_138_SSURef_NR99",
+                                             "MiDAS_2.1.3","MiDAS_3.7","MiDAS_4.8"))]
+
+rc2 <- rc2[, Relative_abundance:=factor(Relative_abundance, levels=c(r01c2$Relative_abundance[1],r001c2$Relative_abundance[1],r0001c2$Relative_abundance[1]))]
+                                                       
+rc2 <- setkey(rc2, Classified)
+
+#Calculate fraction of ASVs with species level classification in the reference databases
+Summary3 <- rc2[,.("Mean"=mean(Classified),
+            "Stdev"=sd(Classified)),
+            by=.(Database,Cutoff)]
+
+write.csv2(Summary3, file="output/Species_classification_summary_V13.txt", row.names=FALSE, quote=FALSE)
+
+## Plot histogram
+p3 <- ggplot(data=rc2, aes(x=Database, y=Classified, fill=Database)) +
+  theme_bw() +
+  geom_violin(scale = "width") +
+  geom_boxplot(width=0.1, fill="white", outlier.shape = NA)+
+  ylab("Percent of ASVs classified at the species-level") +
+  scale_fill_brewer(palette="RdYlBu")+
+  theme(axis.title.x=element_blank()) +
+  scale_y_continuous(limits = c(0, 100), breaks=seq(0,100,10)) +
+  theme(legend.position = "none") +
+  facet_grid(~Relative_abundance) +
+  theme(axis.text.x = element_text(angle = 90, vjust=0.5, hjust = 1))
+
+rm(df3, df_long3,merged_map3,rc2,r0001c2,r001c2,r01c2)
+```
+
+## Create merged graph
+```{r, eval=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+p <- p1 + p2 + p3 +plot_layout(ncol=1)
+```
+
+## Export data
+```{r, eval=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+ggsave(filename="output/Database_evaluation_V13.pdf", plot=p, width=9, height=12, useDingbats=FALSE, limitsize=FALSE)
+```

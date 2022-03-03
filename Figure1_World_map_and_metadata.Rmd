@@ -1,0 +1,91 @@
+---
+title: "Figure 1: World map and WWTP metadata"
+author: "Morten Simonsen Dueholm"
+date: "2021-08-25"
+---
+
+# Load packages
+```{r setup, include=FALSE}
+library(tidyverse) # tidyverse v.1.3.1
+library(maps) # maps v. 3.3.0
+library(patchwork) # patchwork v. 1.1.1
+```
+
+# Load data
+```{r message=FALSE, warning=TRUE, include=FALSE}
+df <- read.csv("data/DataS1_210413.txt", sep="\t")
+df[df==""]<-NA
+df <- mutate(df, Process_type2 = fct_other(Process_type, keep = c("C","C,N","C,N,DN", "C,N,DN,P")))
+df$Process_type2[is.na(df$Process_type2)] <- "Other"
+df$Plant_type[is.na(df$Plant_type)] <- "Other"
+```
+
+# Create worldmap and plot the WWTPs colored by process type 
+```{r}
+mp <- NULL
+mapWorld <- borders("world", colour = "#333333", fill="#DAD7C5")
+mp <- ggplot() + mapWorld
+
+mp1 <- mp + geom_point(data = df,aes(x=Longitude, y=Latitude, colour = Process_type2), size=2)
+
+ggsave(filename="output/Figure1a_process.pdf", plot=mp1, width=10, height=5, useDingbats=FALSE, limitsize=FALSE)
+```
+
+# Create summary for worldmap
+```{r}
+Summary1 <- df %>%
+  group_by(Continent) %>%
+  summarize("Countries"=n_distinct(Country, na.rm = TRUE),
+            "Cities"=n_distinct(City, na.rm = TRUE),
+            "WWTPs"=n_distinct(WWTP_id, na.rm = TRUE))
+```
+
+# Create summary for plant and process types
+```{r}
+Summary_Plant_type <- df %>%
+  replace_na(list(Plant_type="Other")) %>%
+  group_by(Plant_type) %>%
+  summarize("Counts"=n_distinct(WWTP_id, na.rm = TRUE),
+            "Percent"=n_distinct(WWTP_id, na.rm = TRUE)/n_distinct(df$WWTP_id, na.rm = TRUE)*100) %>%
+  mutate(Plant_type=reorder(Plant_type, Counts)) %>%
+  mutate(Plant_type=relevel(Plant_type, "Other"))
+
+Summary_Process_type <- df %>%
+  filter(Plant_type=="Activated sludge") %>%
+  group_by(Process_type2) %>%
+  summarize("Counts"=n_distinct(WWTP_id, na.rm = TRUE),
+            "Percent"=n_distinct(WWTP_id, na.rm = TRUE)/n_distinct(filter(df, Plant_type=="Activated sludge")$WWTP_id, 
+                                                                   na.rm = TRUE)*100)  %>%
+  mutate(Process_type2=factor(Process_type2,levels=rev(levels(Process_type2))))
+```
+
+# Make bar plots
+```{r, eval=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+p1 <- ggplot(Summary_Plant_type, aes(x=Plant_type, y=Percent, fill=Plant_type)) +
+  theme_bw() +
+  geom_bar(color="black", stat="identity",position = "identity", width=0.8) +
+  geom_text(aes(x=Plant_type, y=Percent+5, label=Counts)) +
+  theme(axis.text.x = element_text(angle = 90, vjust=0.5, hjust = 1)) +
+  scale_fill_brewer(palette="RdYlBu")+
+  ylab("Plant type (%)") +
+  scale_y_continuous(limits = c(0, 100), breaks=seq(0,100,10)) +
+  theme(axis.title.y=element_blank())+
+  theme(legend.position = "none") +
+  coord_flip()
+
+p2 <- ggplot(Summary_Process_type, aes(x=Process_type2, y=Percent, fill=Process_type2)) +
+  theme_bw() +
+  geom_bar(color="black", stat="identity",position = "identity", width=0.8) +
+  geom_text(aes(x=Process_type2, y=Percent+5, label=Counts)) +
+  theme(axis.text.x = element_text(angle = 90, vjust=0.5, hjust = 1)) +
+  scale_fill_brewer(palette="RdYlBu")+
+  ylab("Process type (%)") +
+  scale_y_continuous(limits = c(0, 100), breaks=seq(0,100,10)) +
+  theme(axis.title.y=element_blank())+
+  theme(legend.position = "none") +
+  coord_flip()
+
+p <- p1 + p2 + plot_layout(ncol=1)
+
+ggsave(filename="output/Figure1b.pdf", plot=p, width=5, height=5, useDingbats=FALSE, limitsize=FALSE)
+```

@@ -1,0 +1,145 @@
+---
+title: "Figure 7: Heatmap of core taxa"
+author: "Marta Nierychlo and Morten Simonsen Dueholm"
+date: "2021-08-25"
+---
+
+#Load packages
+```{r load_packages, message=FALSE, warning=FALSE, echo=FALSE, include=FALSE}
+library(ampvis2)
+library(tidyverse)
+library(patchwork)
+```
+
+#Load data
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+#load metadata
+seq_metadata <- read.csv("data/2020-07-03_Sequencing_metadata.txt", sep="\t")
+wwtp_m <- read.csv("data/DataS1_210413.txt", sep="\t")
+
+#V13
+seq_V13 <- seq_metadata[ , which(names(seq_metadata) %in% c("V13_seq_id","WWTP_id"))]
+
+V13metadata <- merge.data.frame(seq_V13, wwtp_m, by ="WWTP_id", all.x = TRUE)
+V13metadata$WWTP_ID <- V13metadata$WWTP_id
+V13metadata <- V13metadata[,-1]
+
+d13 <- amp_load(otutab = "data/V13_ASVtab.txt", 
+                taxonomy = "data/V13ASV_vs_MiDAS_4.8.sintax",
+                metadata = V13metadata)
+
+d13n <- amp_subset_samples(d13, minreads = 10000, normalise = TRUE)
+
+#Subset AS only in 4 basic process_type(s)
+d13nAS <- amp_subset_samples(d13n, Plant_type == "Activated sludge")
+d13nAS4PT <-  amp_subset_samples(d13nAS, Process_type %in% c("C", "C,N", "C,N,DN", "C,N,DN,P")) 
+
+rm(d13,d13n,d13nAS,seq_metadata,seq_V13,V13metadata)
+
+# Load Core data
+core_genera <- read.csv("output/Genus_core.csv", sep=",") # output from Figure6a_6b_Core_analysis.Rmd
+core_species <- read.csv("output/Species_core.csv", sep=",") # output from Figure6a_6b_Core_analysis.Rmd
+
+#Create list of strict core genera
+sc_genera <- core_genera %>%
+  filter(V1V3==4) %>%
+  mutate(Genus=str_c("g__",Genus))
+sc_genera <- sc_genera$Genus
+
+#Create list of general core genera
+gc_genera <- core_genera %>%
+  filter(V1V3==3) %>%
+  mutate(Genus=str_c("g__",Genus))
+gc_genera <- gc_genera$Genus
+
+#Create list of general core species
+gc_species <- core_species %>%
+  filter(V1V3==3) %>%
+  mutate(Species=str_c("s__",Species))
+gc_species <- gc_species$Species
+
+```
+
+### Create heatmaps
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+# Create functions to make heatmaps
+GenusDataPrep <- function(Function,Database) {
+  df <- amp_subset_taxa(Database, tax_vector = Function, normalise = FALSE)
+  
+  df2 <- amp_heatmap(df,
+            group_by = "Process_type",
+            tax_aggregate = "Genus",
+            tax_add = "Phylum",
+            measure = "mean",
+            tax_show = 100,
+            tax_empty ="remove",
+            normalise = FALSE,
+            textmap = TRUE)
+  
+  df3 <- df2 %>%
+  mutate(Genus = rownames(df2)) %>%
+  gather(1:length(unique(df$metadata$Process_type)), key="Process_type", value="RA") %>%
+  mutate(Genus = fct_reorder(Genus, RA, mean))
+  df3
+}
+
+SpeciesDataPrep <- function(Function,Database) {
+  df <- amp_subset_taxa(Database, tax_vector = Function, normalise = FALSE)
+  
+  df2 <- amp_heatmap(df,
+            group_by = "Process_type",
+            tax_aggregate = "Species",
+            tax_add = "Genus",
+            measure = "mean",
+            tax_show = 100,
+            tax_empty ="remove",
+            normalise = FALSE,
+            textmap = TRUE)
+  
+  df3 <- df2 %>%
+  mutate(Species = rownames(df2)) %>%
+  gather(1:length(unique(df$metadata$Process_type)), key="Process_type", value="RA") %>%
+  mutate(Genus = fct_reorder(Species, RA, mean))
+  df3
+  }
+
+Heatmap <- function(df) {
+  p <- ggplot(df, aes(Process_type, Genus)) +
+    geom_tile(aes(fill = RA)) + 
+    geom_text(aes(label = round(RA, 1))) +
+  theme_bw() +
+  theme(axis.title.y = element_blank()) +
+  theme(axis.title.x = element_blank()) +
+  theme(axis.text.x = element_text(angle = 90, vjust=1, hjust=1)) +
+  scale_fill_binned(breaks = c(0.01, 0.1, 1),
+                      limits = c(0, 10),
+                      guide = guide_coloursteps(),
+                      trans = "sqrt")
+p}
+
+Heatmap2 <- function(df) {
+  p <- ggplot(df, aes(Process_type, Species)) +
+    geom_tile(aes(fill = RA)) + 
+    geom_text(aes(label = round(RA, 1))) +
+  theme_bw() +
+  theme(axis.title.y = element_blank()) +
+  theme(axis.title.x = element_blank()) +
+  theme(axis.text.x = element_text(angle = 90, vjust=1, hjust=1)) +
+  scale_fill_binned(breaks = c(0.01, 0.1, 1),
+                      limits = c(0, 10),
+                      guide = guide_coloursteps(),
+                      trans = "sqrt")
+p}
+
+df1 <- GenusDataPrep(sc_genera, d13nAS4PT)
+df2 <- GenusDataPrep(gc_genera, d13nAS4PT)
+df3 <- SpeciesDataPrep(gc_species, d13nAS4PT)
+
+p1a <- Heatmap(df1) + theme(legend.position = "none")
+p1b <- Heatmap(df2) + theme(legend.position = "none")
+p1c <- Heatmap(df3) 
+
+p1 <- p1a + p1c + p1b + plot_layout(ncol=1,heights=c(13,7,51)) #Ordered for easier figure setup in illustrator
+
+ggsave(filename="output/Figure7_Core_heatmaps.pdf", plot=p1, width=5, height=14, useDingbats=FALSE, limitsize=FALSE)
+```

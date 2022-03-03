@@ -1,0 +1,48 @@
+---
+title: "Table 1: Sequence novelty"
+author: "Morten Simonsen Dueholm"
+date: "2021-08-25"
+---
+
+# Load packages
+```{r, eval=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+library(tidyverse)
+```
+
+## Import data
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+# Read mapping results
+df <- read.delim("data/tax_SILVA.txt",
+                      sep = "\t",
+                      header = FALSE,
+                      quote = "\"",
+                      fill = TRUE,
+                      check.names = FALSE,
+                      stringsAsFactors = TRUE)
+```
+
+# Novelty Calculations
+```{r, eval=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+Novelty_counts <- df %>% summarize("Calc"="Counts",
+            "New_species"=sum(V3<98.7),
+            "New_genera"=sum(V3<94.5),
+            "New_families"=sum(V3<86.5),
+            "New_orders"=sum(V3<82),
+            "New_classes"=sum(V3<78.5),
+            "New_phyla"=sum(V3<75))
+
+Novelty_percent <- df %>% summarize("Calc"="Percentage",
+            "New_species"=str_c(round(sum(V3<98.7)/n()*100,2),"%"),
+            "New_genera"=str_c(round(sum(V3<94.5)/n()*100,2),"%"),
+            "New_families"=str_c(round(sum(V3<86.5)/n()*100,2),"%"),
+            "New_orders"=str_c(round(sum(V3<82)/n()*100,2),"%"),
+            "New_classes"=str_c(round(sum(V3<78.5)/n()*100,2),"%"),
+            "New_phyla"=str_c(round(sum(V3<75)/n()*100,2),"%"))
+
+Novelty <- rbind(Novelty_counts,Novelty_percent)
+```
+
+#Export
+```{r, eval=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+write_csv(Novelty, "output/Table1_Sequence_novelty.csv")
+```

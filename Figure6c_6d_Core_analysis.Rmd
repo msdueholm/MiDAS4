@@ -1,0 +1,136 @@
+---
+title: "Figure 6b, 6c: Coverage for core V1-V3"
+author: "Marta Nierychlo and Morten Simonsen Dueholm"
+date: "2021-08-25"
+---
+
+#Load packages
+```{r load_packages, message=FALSE, warning=FALSE, echo=FALSE, include=FALSE}
+library(ampvis2)
+library(data.table)
+library(tidyverse)
+library(patchwork)
+```
+
+#Load data
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+#load metadata
+seq_metadata <- read.csv("data/2020-07-03_Sequencing_metadata.txt", sep="\t")
+wwtp_m <- read.csv("data/DataS1_210413.txt", sep="\t")
+
+#V13
+seq_V13 <- seq_metadata[ , which(names(seq_metadata) %in% c("V13_seq_id","WWTP_id"))]
+
+V13metadata <- merge.data.frame(seq_V13, wwtp_m, by ="WWTP_id", all.x = TRUE)
+V13metadata$WWTP_ID <- V13metadata$WWTP_id
+V13metadata <- V13metadata[,-1]
+
+d13 <- amp_load(otutab = "data/V13_ASVtab.txt", 
+                taxonomy = "data/V13ASV_vs_MiDAS_4.8.sintax",
+                metadata = V13metadata)
+
+d13n <- amp_subset_samples(d13, minreads = 10000, normalise = TRUE)
+
+#Subset AS only in 4 basic process_type(s)
+d13nAS <- amp_subset_samples(d13n, Plant_type == "Activated sludge")
+d13nAS4PT <-  amp_subset_samples(d13nAS, Process_type %in% c("C", "C,N", "C,N,DN", "C,N,DN,P")) 
+
+# Load data to identify core and CRT genera and species
+ImportantGenera <- data.table::fread("data/Genus_core.csv",
+                      sep = ",",
+                      header = TRUE,
+                      quote = "\"",
+                      fill = TRUE,
+                      check.names = FALSE,
+                      stringsAsFactors = FALSE)
+
+ImportantSpecies <- data.table::fread("data/Species_core.csv",
+                      sep = ",",
+                      header = TRUE,
+                      quote = "\"",
+                      fill = TRUE,
+                      check.names = FALSE,
+                      stringsAsFactors = FALSE)
+
+rm(d13,d13n,d13nAS,seq_metadata,seq_V13,V13metadata,V4metadata,wwtp_m)
+```
+
+### V13
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+# Convert heatmap data into a data.frame
+ASV_d13nAS4PT <- amp_heatmap(d13nAS4PT,
+            group_by = "Process_type",
+            tax_aggregate = "OTU",
+            tax_add = c("Genus","Species"),
+            measure = "mean",
+            tax_show = 100000,
+            normalise = TRUE,
+            textmap = TRUE
+            )
+
+ASV_d13nAS4PT_2 <- ASV_d13nAS4PT %>%
+  mutate(tax = rownames(ASV_d13nAS4PT)) %>%
+  separate(tax, sep="; ", into=c("Genus","Species","ASV")) %>%
+  mutate(Genus = ifelse(grepl("ASV",Genus),"Unclassified",Genus)) %>%
+  mutate(Species = ifelse(grepl("ASV",Species),"Unclassified",Species)) %>%
+  merge(ImportantGenera[,c(1,4)], by="Genus", all.x = TRUE) %>%
+  mutate(Genus_type = ifelse(Genus=="Unclassified","Unclassified",Genus_type)) %>%
+  mutate(Genus_type = ifelse(is.na(Genus_type),"Other",Genus_type)) %>%
+  merge(ImportantSpecies[,c(2,5)], by="Species", all.x = TRUE) %>%
+  mutate(Species_type = ifelse(Species=="Unclassified","Unclassified",Species_type)) %>%
+  mutate(Species_type = ifelse(is.na(Species_type),"Other",Species_type)) %>%
+  gather("C","C,N","C,N,DN","C,N,DN,P", key="Process_type", value="RA" )
+
+Genus_summary1 <- ASV_d13nAS4PT_2 %>%
+  filter(RA>0) %>%
+  group_by(Process_type,Genus_type) %>%
+  summarise(UniqueGenera=length(unique(Genus)), RAGenera=sum(RA)) %>%
+  group_by(Process_type) %>%
+  mutate(UniqueGeneraPercentage = UniqueGenera/sum(UniqueGenera)*100) %>%
+  mutate(Genus_type = factor(Genus_type, levels=c("Unclassified", "Other", "CAT","LC", "GC", "SC")))
+
+Species_summary1 <- ASV_d13nAS4PT_2 %>%
+  filter(RA>0) %>%
+  group_by(Process_type,Species_type) %>%
+  summarise(UniqueSpecies=length(unique(Species)), RASpecies=sum(RA)) %>%
+  group_by(Process_type) %>%
+  mutate(UniqueSpeciesPercentage = UniqueSpecies/sum(UniqueSpecies)*100) %>%
+  mutate(Species_type = factor(Species_type, levels=c("Unclassified", "Other", "CAT", "LC", "GC", "SC")))
+
+p1 <- ggplot(data=Genus_summary1, aes(x=Process_type, y=UniqueGenera, fill=Genus_type)) +
+  theme_bw() +
+  geom_bar(color="black",stat="identity", width=0.8) +
+  theme(axis.text.x = element_text(angle = 45, vjust=1, hjust=1)) +
+  scale_fill_brewer(palette="RdYlBu")+
+  ylab("Number observed genera") + 
+  theme(axis.title.x=element_blank(),legend.position = "none")
+
+p2 <- ggplot(data=Genus_summary1, aes(x=Process_type, y=RAGenera, fill=Genus_type)) +
+  theme_bw() +
+  geom_bar(color="black",stat="identity", width=0.8) +
+  theme(axis.text.x = element_text(angle = 45, vjust=1, hjust=1)) +
+  scale_fill_brewer(palette="RdYlBu")+
+  ylab("Relative abundance (%)") + 
+  theme(axis.title.x=element_blank())
+
+p3 <- ggplot(data=Species_summary1, aes(x=Process_type, y=UniqueSpecies, fill=Species_type)) +
+  theme_bw() +
+  geom_bar(color="black",stat="identity", width=0.8) +
+  theme(axis.text.x = element_text(angle = 45, vjust=1, hjust=1)) +
+  scale_fill_brewer(palette="RdYlBu")+
+  ylab("Number of observed species") + 
+  theme(axis.title.x=element_blank(),legend.position = "none")
+
+p4 <- ggplot(data=Species_summary1, aes(x=Process_type, y=RASpecies, fill=Species_type)) +
+  theme_bw() +
+  geom_bar(color="black",stat="identity", width=0.8) +
+  theme(axis.text.x = element_text(angle = 45, vjust=1, hjust=1)) +
+  scale_fill_brewer(palette="RdYlBu")+
+  ylab("Relative abundance (%)") + 
+  theme(axis.title.x=element_blank())
+
+p <- p1 + p2 + p3 + p4 + plot_layout(ncol=4)
+ggsave(filename="output/Figure6c_6d_Percentage_of_core_and_CRT_taxa_V13.pdf", plot=p, width=10, height=3, useDingbats=FALSE, limitsize=FALSE)
+
+```
+

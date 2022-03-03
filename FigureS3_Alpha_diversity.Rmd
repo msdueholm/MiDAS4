@@ -1,0 +1,250 @@
+---
+title: "Figure S3: Alpha-diversity analyses"
+author: "Marta Nierychlo and Morten Simonsen Dueholm"
+date: "2021-08-26"
+---
+
+#Load packages
+```{r load_packages, message=FALSE, warning=FALSE, echo=FALSE, include=FALSE}
+library(ampvis2)
+library(patchwork)
+library(ggpubr)
+library(FSA)
+library(rcompanion)
+```
+
+#Load data
+```{r MD data}
+#load metadata
+seq_metadata <- read.csv("data/2020-07-03_Sequencing_metadata.txt", sep="\t")
+wwtp_m <- read.csv("data/DataS1_210413.txt", sep="\t")
+wwtp_m[wwtp_m==""]<-NA
+
+#V13
+seq_V13 <- seq_metadata[ , which(names(seq_metadata) %in% c("V13_seq_id","WWTP_id"))]
+
+V13metadata <- merge.data.frame(seq_V13, wwtp_m, by ="WWTP_id", all.x = TRUE)
+V13metadata$WWTP_ID <- V13metadata$WWTP_id
+V13metadata <- V13metadata[,-1]
+
+d13 <- amp_load(otutab = "data/V13_ASVtab.txt", 
+                taxonomy = "data/V13ASV_vs_MiDAS_4.8.sintax",
+                metadata = V13metadata)
+```
+
+
+#alpha_AS4PT_generic based on V1-V3 data
+```{r V4 alpha diversity}
+#prepare rarefied dataset for diversity analysis
+dr <- amp_subset_samples(d13, rarefy = 10000, minreads = 10000)
+#or only AS4PT samples
+drs <- amp_subset_samples(dr, Plant_type == "Activated sludge")
+drs <- amp_subset_samples(drs, Process_type %in% c("C", "C,N", "C,N,DN", "C,N,DN,P"))
+
+#calculate alpha diversity indices
+alfa <-amp_alphadiv(drs)
+
+######################
+#~Process_type
+######################
+# Remove samples without metadata
+alfa_process_type <- alfa[ !is.na(alfa$Process_type), ]
+
+# Select groups for statistical comparison
+p1a1 <- 
+  ggplot(data = alfa_process_type, aes(x = Process_type, y = ObservedOTUs, fill = Process_type))+
+  theme_bw() +
+  geom_violin(scale = "width") +
+  geom_boxplot(width=0.2, fill="white")+
+  xlab(NULL) +
+  scale_y_continuous("ASV richness", limits = c(0, 3500)) +
+  theme(legend.position = "none",
+        axis.text.y = element_text(colour = "black"), 
+        axis.text.x = element_blank()) +
+  scale_fill_brewer(palette="RdYlBu") +
+  stat_compare_means(label.y=3500)
+
+p1a2 <- 
+  ggplot(data = alfa_process_type, aes(x = Process_type, y = invSimpson, fill = Process_type))+
+  theme_bw() +
+  geom_violin(scale = "width") +
+  geom_boxplot(width=0.2, fill="white")+
+  xlab("Process type") +
+  scale_y_continuous("Inverse Simpson (1/D)", limits = c(0, 600)) +
+  theme(legend.position = "none",
+        axis.text.y = element_text(colour = "black"), 
+        axis.text.x = element_text(colour = "black", vjust = 1, hjust = 1, angle = 45)) +
+  scale_fill_brewer(palette="RdYlBu") +
+  stat_compare_means(label.y=600) 
+
+######################
+#~ind_text
+######################
+alfa$ind_text <- factor(alfa$ind_text, levels=c("none", "very low", "low", "medium", "high", "all"))
+alfa_Ind_text <- alfa[!is.na(alfa$ind_text),]
+
+p1b1 <- 
+  ggplot(data = alfa_Ind_text, aes(x = ind_text, y = ObservedOTUs, fill = ind_text))+
+  theme_bw() +
+  geom_violin(scale = "width") +
+  geom_boxplot(width=0.2, fill="white")+
+  xlab(NULL) +
+  scale_y_continuous(NULL, limits = c(0, 3500)) +
+  theme(legend.position = "none",
+        axis.text.y = element_blank(), 
+        axis.text.x = element_blank()) +
+  scale_fill_brewer(palette="RdYlBu") +
+  stat_compare_means(label.y=3500)
+
+p1b2 <- 
+  ggplot(data = alfa_Ind_text, aes(x = ind_text, y = invSimpson, fill = ind_text))+
+  theme_bw() +
+  geom_violin(scale = "width") +
+  geom_boxplot(width=0.2, fill="white")+
+  xlab("Industrial load") +
+  scale_y_continuous(NULL, limits = c(0, 600)) +
+  theme(legend.position = "none",
+        axis.text.y = element_blank(), 
+        axis.text.x = element_text(colour = "black", vjust = 1, hjust = 1, angle = 45)) +
+  scale_fill_brewer(palette="RdYlBu") +
+  stat_compare_means(label.y=600) 
+
+######################
+#~Temp_range
+######################
+# Order levels of the variable
+alfa$Temp_range <- factor(alfa$Temp_range, levels=c("very low", "low", "moderate", "high", "very high", "extremely high"))
+
+# Remove samples without metadata
+alfa_temp_range <- alfa[ !is.na(alfa$Temp_range), ]
+
+p1c1 <- 
+  ggplot(data = alfa_temp_range, aes(x = Temp_range, y = ObservedOTUs, fill = Temp_range))+
+  theme_bw() +
+  geom_violin(scale = "width") +
+  geom_boxplot(width=0.2, fill="white")+
+  xlab(NULL) +
+  scale_y_continuous(NULL, limits = c(0, 3500)) +
+  theme(legend.position = "none",
+        axis.text.y = element_blank(),
+        axis.text.x = element_blank()) +
+  scale_fill_brewer(palette="RdYlBu") +
+  stat_compare_means(label.y=3500)
+
+p1c2 <- 
+  ggplot(data = alfa_temp_range, aes(x = Temp_range, y = invSimpson, fill = Temp_range))+
+  theme_bw() +
+  geom_violin(scale = "width") +
+  geom_boxplot(width=0.2, fill="white")+
+  xlab("Temperature range") +
+  scale_y_continuous(NULL, limits = c(0, 600)) +
+  theme(legend.position = "none",
+        axis.text.y = element_blank(), 
+        axis.text.x = element_text(colour = "black", vjust = 1, hjust = 1, angle = 45)) +
+  scale_fill_brewer(palette="RdYlBu") +
+  stat_compare_means(label.y=600) 
+
+######################
+#~Continent
+######################
+alfa_Continent <- alfa[ !is.na(alfa$Continent), ]
+
+#order Continents by increasing median Simpson
+alfa_Continent$Continent = with(alfa_Continent, reorder(Continent, ObservedOTUs, median))
+
+p1d1 <- 
+  ggplot(data = alfa_Continent, aes(x = Continent, y = ObservedOTUs, fill = Continent))+
+  theme_bw() +
+  geom_violin(scale = "width") +
+  geom_boxplot(width=0.2, fill="white")+
+  xlab(NULL) +
+  scale_y_continuous(NULL, limits = c(0, 3500)) +
+  theme(legend.position = "none",
+        axis.text.y = element_blank(), 
+        axis.text.x = element_blank()) +
+  scale_fill_brewer(palette="RdYlBu") +
+  stat_compare_means(label.y=3500)
+
+p1d2 <- 
+  ggplot(data = alfa_Continent, aes(x = Continent, y = invSimpson, fill = Continent))+
+  theme_bw() +
+  geom_violin(scale = "width") +
+  geom_boxplot(width=0.2, fill="white")+
+  xlab("Continent") +
+  scale_y_continuous(NULL, limits = c(0, 600)) +
+  theme(legend.position = "none",
+        axis.text.y = element_blank(), 
+        axis.text.x = element_text(colour = "black", vjust = 1, hjust = 1, angle = 45)) +
+  scale_fill_brewer(palette="RdYlBu") +
+  
+  stat_compare_means(label.y=600) 
+
+######################
+#~Climate zone
+######################
+alfa_Climate <- alfa[ !is.na(alfa$ClimateZone), ] %>%
+  mutate(Climate = substr(ClimateZone,1,1))
+
+p1e1 <- 
+  ggplot(data = alfa_Climate, aes(x = Climate, y = ObservedOTUs, fill = Climate))+
+  theme_bw() +
+  geom_violin(scale = "width") +
+  geom_boxplot(width=0.2, fill="white")+
+  xlab(NULL) +
+  scale_y_continuous(NULL, limits = c(0, 3500)) +
+  theme(legend.position = "none",
+        axis.text.y = element_blank(), 
+        axis.text.x = element_blank()) +
+  scale_fill_brewer(palette="RdYlBu") +
+  stat_compare_means(label.y=3500)
+
+p1e2 <- 
+  ggplot(data = alfa_Climate, aes(x = Climate, y = invSimpson, fill = Climate))+
+  theme_bw() +
+  geom_violin(scale = "width") +
+  geom_boxplot(width=0.2, fill="white")+
+  xlab("Climate zone") +
+  scale_y_continuous(NULL, limits = c(0, 600)) +
+  theme(legend.position = "none",
+        axis.text.y = element_blank(), 
+        axis.text.x = element_text(colour = "black", vjust = 1, hjust = 1, angle = 45)) +
+  scale_fill_brewer(palette="RdYlBu") +
+  stat_compare_means(label.y=600) 
+
+######################
+#~Combined figure
+######################
+
+p1 <- ( p1a1 | p1b1 | p1c1 | p1d1 | p1e1 ) / ( p1a2 | p1b2 | p1c2 | p1d2 | p1e2 )
+ggsave(filename="output/FigureS3.pdf", plot=p1, width=20, height=8, useDingbats=FALSE, limitsize=FALSE)
+
+######################
+#~Statistical analysis
+######################
+
+Dunn_Obs_process <- dunnTest(ObservedOTUs ~ Process_type, data=alfa_process_type, method="bonferroni")$res
+Dunn_invS_process <- dunnTest(invSimpson ~ Process_type, data=alfa_process_type, method="bonferroni")$res 
+cldList(P.adj ~ Comparison, data=Dunn_Obs_process, threshold = 0.01)
+cldList(P.adj ~ Comparison, data=Dunn_invS_process, threshold = 0.01)
+
+Dunn_Obs_ind <- dunnTest(ObservedOTUs ~ ind_text, data=alfa_Ind_text, method="bonferroni")$res
+Dunn_invS_ind <- dunnTest(invSimpson ~ ind_text, data=alfa_Ind_text, method="bonferroni")$res 
+cldList(P.adj ~ Comparison, data=Dunn_Obs_ind, threshold = 0.01)
+cldList(P.adj ~ Comparison, data=Dunn_invS_ind, threshold = 0.01)
+
+Dunn_Obs_temp <- dunnTest(ObservedOTUs ~ Temp_range, data=alfa_temp_range, method="bonferroni")$res
+Dunn_invS_temp <- dunnTest(invSimpson ~ Temp_range, data=alfa_temp_range, method="bonferroni")$res 
+cldList(P.adj ~ Comparison, data=Dunn_Obs_temp, threshold = 0.01)
+cldList(P.adj ~ Comparison, data=Dunn_invS_temp, threshold = 0.01)
+
+Dunn_Obs_Cont <- dunnTest(ObservedOTUs ~ Continent, data=alfa_Continent, method="bonferroni")$res
+Dunn_invS_Cont <- dunnTest(invSimpson ~ Continent, data=alfa_Continent, method="bonferroni")$res
+cldList(P.adj ~ Comparison, data=Dunn_Obs_Cont, threshold = 0.01)
+cldList(P.adj ~ Comparison, data=Dunn_invS_Cont, threshold = 0.01)
+
+Dunn_Obs_Clim <- dunnTest(ObservedOTUs ~ Climate, data=alfa_Climate, method="bonferroni")$res
+Dunn_invS_Clim <- dunnTest(invSimpson ~ Climate, data=alfa_Climate, method="bonferroni")$res
+cldList(P.adj ~ Comparison, data=Dunn_Obs_Clim, threshold = 0.01)
+cldList(P.adj ~ Comparison, data=Dunn_invS_Clim, threshold = 0.01)
+
+```

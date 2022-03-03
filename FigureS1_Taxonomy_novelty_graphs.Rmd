@@ -1,0 +1,55 @@
+---
+title: "Figure S1: Taxonomy novelty graphs"
+author: "Morten Simonsen Dueholm"
+date: "2021-08-25"
+---
+
+## R-packages
+```{r, eval=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+library(tidyverse)
+library(data.table)
+```
+
+## Import data
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+# Read mapping results
+df <- read.delim("data/tax_complete.csv",
+                      sep = ",",
+                      header = TRUE,
+                      quote = "\"",
+                      fill = TRUE,
+                      check.names = FALSE,
+                      stringsAsFactors = FALSE)
+
+```
+
+# Novelty Calculations
+```{r, eval=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+Novelty <- df %>%
+  group_by(Phylum) %>%
+  summarize("New genera"= uniqueN(Genus[grepl("midas", Genus)]),
+            "New families"= uniqueN(Family[grepl("midas", Family)]),
+            "New orders"= uniqueN(Order[grepl("midas", Order)]),
+            "New classes"= uniqueN(Class[grepl("midas", Class)]))%>%
+  gather(2:5, key = "Taxonomic_rank", value = "Counts")%>%
+    mutate(Taxonomic_rank=factor(Taxonomic_rank, levels=c("New classes","New orders","New families","New genera"))) %>%
+  filter(Counts>0)
+```
+
+## Plot histogram
+```{r, eval=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+p1 <- ggplot(data=Novelty, aes(x=Phylum, y=Counts, fill=Taxonomic_rank)) +
+  theme_bw() +
+  geom_bar(color="black",stat="identity",position = "identity", width=0.8) +
+  theme(axis.text.x = element_text(angle = 90, vjust=0.5, hjust = 1)) +
+  scale_fill_brewer(palette="RdYlBu")+
+  ylab("Number of taxa that are assigned denovo names") + 
+  theme(axis.title.x=element_blank())+
+  theme(legend.position = "none")+
+  facet_grid(Taxonomic_rank~., scales="free")
+```
+
+## Export data
+```{r, eval=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+ggsave(filename="output/FigureS1_Novel_taxa.pdf", plot=p1, width=12, height=8, useDingbats=FALSE, limitsize=FALSE)
+```
